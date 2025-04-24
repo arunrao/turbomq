@@ -1,0 +1,31 @@
+{
+  "name": "next-queue-browser-example",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/cleanup.js && next dev",
+    "cleanup": "node scripts/cleanup.js",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "formidable": "^3.5.1",
+    "next": "^15.3.1",
+    "node-fetch": "^2.7.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "socket.io": "^4.7.2",
+    "socket.io-client": "^4.7.2",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/formidable": "^3.4.5",
+    "@types/node": "^18.19.86",
+    "@types/react": "^19.1.2",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^8.38.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.8.3"
+  }
+}

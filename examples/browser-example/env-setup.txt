@@ -1,0 +1,8 @@
+# Environment variables for the browser example
+# Copy this content to a .env file in the same directory
+
+# Database URL (SQLite)
+DATABASE_URL="file:./prisma/dev.db"
+
+# Next.js environment
+NODE_ENV="development"

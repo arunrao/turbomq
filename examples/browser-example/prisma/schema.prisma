@@ -1,0 +1,52 @@
+// This is your Prisma schema file for the browser example
+// Using SQLite for simplicity
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Job {
+  id            String    @id @default(uuid())
+  taskName      String
+  payload       String    // JSON string
+  status        String    // pending, running, completed, failed
+  priority      Int       @default(0)
+  runAt         DateTime  @default(now())
+  attemptsMade  Int       @default(0)
+  maxAttempts   Int       @default(3)
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+  resultKey     String?
+  progress      Int?      @default(0)
+  workerId      String?   // ID of worker currently processing this job
+  lastHeartbeat DateTime? // Last time the worker sent a heartbeat
+  webhookUrl    String?   // URL to send webhook notifications to
+  webhookHeaders String?  // JSON string of headers to include in webhook requests
+  
+  @@index([status, runAt, priority])
+  @@index([taskName, status])
+  @@index([workerId])
+}
+
+model JobResult {
+  key     String @id
+  jobId   String
+  result  String // JSON string
+  created DateTime @default(now())
+}
+
+model WorkerHeartbeat {
+  id         String   @id @default(uuid())
+  workerId   String   @unique
+  lastSeen   DateTime @default(now())
+  currentJob String?
+  
+  @@index([workerId])
+}
