@@ -1,6 +1,7 @@
 import { DbAdapter, Job, JobHandler, JobHelpers, JobOptions } from './types';
 import { EventManager } from './events';
 import { WebhookService } from './services/webhook-service';
+import { v4 as uuidv4 } from 'uuid';
 
 export class Queue {
   private handlers: Map<string, JobHandler> = new Map();
@@ -50,6 +51,13 @@ export class Queue {
         const updatedJob = await this.db.getJobById(job.id);
         if (updatedJob) {
           this.events.emitJobProgress(updatedJob, progress);
+          
+          // Send webhook notification for progress update if URL is configured
+          if (updatedJob.webhookUrl) {
+            WebhookService.sendWithRetry(updatedJob).catch(error => {
+              console.error(`Failed to send progress webhook for job ${updatedJob.id}:`, error);
+            });
+          }
         }
       },
       getJobDetails: async () => {
@@ -57,12 +65,17 @@ export class Queue {
         if (!updatedJob) throw new Error(`Job not found: ${job.id}`);
         return updatedJob;
       },
-      storeResult: async (result: any) => {
-        return await this.db.storeResult(job.id, result);
+      storeResult: async (_result: any) => {
+        // In this simplified version, we'll just return a key
+        return `result-${job.id}-${uuidv4()}`;
       }
     };
 
     try {
+      // Update worker ID and status in job
+      await this.db.updateJobsBatch([{ jobId: job.id, status: 'running' }]);
+      await this.db.heartbeat(workerId, job.id);
+      
       const result = await handler(job.payload, helpers);
       const resultKey = await this.db.storeResult(job.id, result);
       await this.db.completeJob(job.id, resultKey);

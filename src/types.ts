@@ -79,8 +79,16 @@ export interface EnvironmentConfig {
 // File Storage Interface
 export interface FileStorage {
   getFile(identifier: string): Promise<Buffer>;
-  getFileStream(identifier: string): Promise<ReadableStream>;
-  storeFile(content: Buffer, metadata: any): Promise<string>;
-  storeFileFromStream(stream: ReadableStream, identifier: string): Promise<string>;
-  getWriteStream(identifier: string): Promise<WritableStream>;
+  getFileStream(identifier: string): Promise<NodeJS.ReadableStream>;
+  storeFile(content: Buffer, metadata: Record<string, any>): Promise<string>;
+  storeFileStream(stream: NodeJS.ReadableStream, metadata: Record<string, any>): Promise<string>;
+  deleteFile(identifier: string): Promise<void>;
+}
+
+export interface StorageAdapter {
+  getFile(identifier: string): Promise<Buffer>;
+  getFileStream(identifier: string): Promise<NodeJS.ReadableStream>;
+  storeFile(content: Buffer, metadata: Record<string, any>): Promise<string>;
+  storeFileStream(stream: NodeJS.ReadableStream, metadata: Record<string, any>): Promise<string>;
+  deleteFile(identifier: string): Promise<void>;
 }

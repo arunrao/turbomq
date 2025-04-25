@@ -5,6 +5,9 @@ import { PrismaAdapter } from './adapters/prisma-adapter';
 import { PostgresAdapter } from './adapters/postgres-adapter';
 import { LocalFileStorage } from './adapters/file-storage-adapter';
 import { getConfig, isServerlessEnvironment } from './config';
+import { QueueClient } from './client';
+import { TestAdapter } from './testing/test-adapter';
+import { createTestQueue, createTestJob, createTestJobResult, createTestWorkerHeartbeat } from './testing/test-utils';
 import { 
   Job, 
   JobOptions, 
@@ -71,6 +74,16 @@ export {
   createPostgresAdapter,
   getConfig,
   isServerlessEnvironment,
+  QueueClient,
+  // Testing utilities
+  TestAdapter,
+  createTestQueue,
+  createTestJob,
+  createTestJobResult,
+  createTestWorkerHeartbeat
+};
+
+export type {
   Job,
   JobOptions,
   JobStatus,

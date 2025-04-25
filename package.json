@@ -1,51 +1,65 @@
 {
-  "name": "next-queue",
-  "version": "0.1.0",
-  "description": "A simple and powerful job queue system for Next.js applications",
+  "name": "turbomq",
+  "version": "1.0.4",
+  "description": "A powerful job queue system for Next.js applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
+    "prepare": "npm run build",
     "test": "jest",
-    "lint": "eslint src --ext .ts,.tsx",
-    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
-    "prepare": "npm run build"
+    "lint": "eslint src --ext .ts,.tsx"
   },
   "keywords": [
     "nextjs",
     "queue",
     "job-queue",
     "background-jobs",
-    "typescript"
+    "prisma"
   ],
-  "author": "",
+  "author": "Arun Rao",
   "license": "MIT",
-  "peerDependencies": {
-    "next": ">=12.0.0",
-    "react": ">=17.0.0"
-  },
   "dependencies": {
     "@prisma/client": "^5.0.0",
+    "socket.io": "^4.7.0",
+    "socket.io-client": "^4.7.0",
     "uuid": "^9.0.0"
   },
+  "optionalDependencies": {
+    "pg": "^8.11.0",
+    "pg-pool": "^3.6.0"
+  },
   "devDependencies": {
-    "@types/node": "^18.0.0",
+    "@types/jest": "^29.0.0",
+    "@types/node": "^18.19.86",
+    "@types/pg": "^8.10.0",
     "@types/react": "^18.0.0",
-    "@types/uuid": "^9.0.0",
+    "@types/uuid": "^9.0.8",
     "@typescript-eslint/eslint-plugin": "^5.0.0",
     "@typescript-eslint/parser": "^5.0.0",
+    "axios": "^1.9.0",
     "eslint": "^8.0.0",
-    "eslint-config-prettier": "^8.0.0",
-    "eslint-plugin-react": "^7.0.0",
     "jest": "^29.0.0",
-    "prettier": "^2.0.0",
     "prisma": "^5.0.0",
     "ts-jest": "^29.0.0",
-    "typescript": "^4.0.0"
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "next": ">=13.0.0",
+    "react": ">=18.0.0"
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arunrao/turbomq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arunrao/turbomq/issues"
+  },
+  "homepage": "https://github.com/arunrao/turbomq#readme"
 }

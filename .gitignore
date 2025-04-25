@@ -1,5 +1,6 @@
 # dependencies
-/node_modules
+node_modules/
+**/node_modules/
 /.pnp
 .pnp.js
 
@@ -54,9 +55,8 @@ out/
 .env.production.local
 
 # Database
-prisma/dev.db
-prisma/dev.db-journal
-/storage/
+prisma/*.db
+prisma/migrations/
 
 # Logs
 logs

@@ -1,416 +1,336 @@
-import { PrismaClient } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
+import { Pool, PoolConfig } from 'pg';
 import { DbAdapter, Job, JobOptions, JobStatus } from '../types';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * PostgreSQL adapter for the Next.js job queue system.
  * Works with both local PostgreSQL instances and Neon (which requires SSL).
  */
 export class PostgresAdapter implements DbAdapter {
-  private prisma: PrismaClient;
+  private pool: Pool;
   private connected = false;
-  private staleJobThreshold = 5 * 60 * 1000; // 5 minutes in milliseconds
 
   /**
    * Create a new PostgreSQL adapter.
-   * @param options Optional configuration options
+   * @param config Optional configuration options
    */
-  constructor(options?: {
-    connectionString?: string;
-    ssl?: boolean;
-    staleJobThresholdMs?: number;
-  }) {
-    // Configure Prisma client with connection options
-    const prismaOptions: any = {};
-    
-    // Use provided connection string or fall back to DATABASE_URL
-    if (options?.connectionString) {
-      prismaOptions.datasources = {
-        db: {
-          url: options.connectionString,
-        },
-      };
-    }
-
-    // Detect if we're using a non-local PostgreSQL service (which typically requires SSL)
-    const connectionUrl = options?.connectionString || process.env.DATABASE_URL || '';
-    const isLocalhost = connectionUrl.includes('localhost') || 
-                      connectionUrl.includes('127.0.0.1');
-    // Enable SSL for any non-local connection unless explicitly disabled
-    const needsSSL = options?.ssl !== false && !isLocalhost;
-    
-    // Add SSL configuration if needed
-    if (needsSSL && prismaOptions.datasources?.db?.url) {
-      // Only add sslmode if not already present
-      if (!prismaOptions.datasources.db.url.includes('sslmode=')) {
-        prismaOptions.datasources.db.url += prismaOptions.datasources.db.url.includes('?') 
-          ? '&sslmode=require' 
-          : '?sslmode=require';
-      }
-    }
-
-    // Initialize Prisma client with options
-    this.prisma = new PrismaClient(prismaOptions);
-    
-    // Set stale job threshold if provided
-    if (options?.staleJobThresholdMs) {
-      this.staleJobThreshold = options.staleJobThresholdMs;
-    }
+  constructor(config?: PoolConfig) {
+    this.pool = new Pool(config);
   }
 
   async connect(): Promise<void> {
     if (!this.connected) {
-      await this.prisma.$connect();
+      await this.pool.connect();
       this.connected = true;
-      
-      // Log connection info but hide sensitive details
-      const datasource = this.prisma._engineConfig?.datasources?.find((ds: { name: string; url: string }) => ds.name === 'db');
-      if (datasource) {
-        const url = new URL(datasource.url);
-        console.log(`Connected to PostgreSQL database at ${url.host}${url.pathname}`);
-      } else {
-        console.log('Connected to PostgreSQL database');
-      }
+      await this.initializeTables();
     }
   }
 
   async disconnect(): Promise<void> {
     if (this.connected) {
-      await this.prisma.$disconnect();
+      await this.pool.end();
       this.connected = false;
-      console.log('Disconnected from PostgreSQL database');
     }
   }
 
-  async createJob(
-    taskName: string,
-    payload: any,
-    options?: JobOptions
-  ): Promise<Job> {
-    const now = new Date();
-    
-    const job = await this.prisma.job.create({
-      data: {
-        taskName,
-        payload: JSON.stringify(payload),
-        status: 'pending',
-        priority: options?.priority || 0,
-        runAt: options?.runAt || now,
-        maxAttempts: options?.maxAttempts || 3,
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
+  private async initializeTables(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS jobs (
+          id TEXT PRIMARY KEY,
+          task_name TEXT NOT NULL,
+          payload JSONB NOT NULL,
+          status TEXT NOT NULL,
+          priority INTEGER DEFAULT 0,
+          run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          attempts_made INTEGER DEFAULT 0,
+          max_attempts INTEGER DEFAULT 3,
+          last_error TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          completed_at TIMESTAMP WITH TIME ZONE,
+          result_key TEXT,
+          progress INTEGER,
+          webhook_url TEXT,
+          webhook_headers JSONB,
+          worker_id TEXT,
+          last_heartbeat TIMESTAMP WITH TIME ZONE
+        );
 
-    return this.mapDbJobToJob(job);
+        CREATE TABLE IF NOT EXISTS job_results (
+          key TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL,
+          result JSONB NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS worker_heartbeats (
+          worker_id TEXT PRIMARY KEY,
+          current_job TEXT,
+          last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+    } finally {
+      client.release();
+    }
   }
 
-  async fetchNextJob(
-    workerId: string,
-    availableTasks: string[]
-  ): Promise<Job | null> {
-    // Start a transaction to ensure job claiming is atomic
-    return await this.prisma.$transaction(async (tx: PrismaClient) => {
-      // Find the next available job
-      const job = await tx.job.findFirst({
-        where: {
-          status: 'pending',
-          taskName: { in: availableTasks },
-          runAt: { lte: new Date() },
-          OR: [
-            { workerId: null },
-            { 
-              workerId: { not: null },
-              lastHeartbeat: { lte: new Date(Date.now() - this.staleJobThreshold) }
-            }
-          ]
-        },
-        orderBy: [
-          { priority: 'desc' },
-          { runAt: 'asc' },
-          { createdAt: 'asc' }
-        ],
-      });
+  async createJob(taskName: string, payload: any, options?: JobOptions): Promise<Job> {
+    const job: Job = {
+      id: uuidv4(),
+      taskName,
+      payload,
+      status: 'pending',
+      priority: options?.priority || 0,
+      runAt: options?.runAt || new Date(),
+      attemptsMade: 0,
+      maxAttempts: options?.maxAttempts || 3,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      webhookUrl: options?.webhookUrl,
+      webhookHeaders: options?.webhookHeaders
+    };
 
-      if (!job) return null;
+    await this.pool.query(
+      `INSERT INTO jobs (
+        id, task_name, payload, status, priority, run_at, max_attempts,
+        webhook_url, webhook_headers, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        job.id,
+        job.taskName,
+        JSON.stringify(job.payload),
+        job.status,
+        job.priority,
+        job.runAt,
+        job.maxAttempts,
+        job.webhookUrl,
+        job.webhookHeaders ? JSON.stringify(job.webhookHeaders) : null,
+        job.createdAt,
+        job.updatedAt
+      ]
+    );
 
-      // Update the job to mark it as claimed by this worker
-      const updatedJob = await tx.job.update({
-        where: { id: job.id },
-        data: {
-          status: 'running',
-          workerId,
-          lastHeartbeat: new Date(),
-          attemptsMade: { increment: 1 },
-          updatedAt: new Date(),
-        },
-      });
-
-      return this.mapDbJobToJob(updatedJob);
-    });
+    return job;
   }
 
-  async fetchNextBatch(
-    workerId: string,
-    availableTasks: string[],
-    batchSize = 5
-  ): Promise<Job[]> {
-    const jobs: Job[] = [];
-    
-    // Use transaction to ensure atomic batch claiming
-    await this.prisma.$transaction(async (tx: PrismaClient) => {
-      // Find batch of jobs
-      const dbJobs = await tx.job.findMany({
-        where: {
-          status: 'pending',
-          taskName: { in: availableTasks },
-          runAt: { lte: new Date() },
-          OR: [
-            { workerId: null },
-            { 
-              workerId: { not: null },
-              lastHeartbeat: { lte: new Date(Date.now() - this.staleJobThreshold) }
-            }
-          ]
-        },
-        orderBy: [
-          { priority: 'desc' },
-          { runAt: 'asc' },
-          { createdAt: 'asc' }
-        ],
-        take: batchSize,
-      });
+  async fetchNextJob(workerId: string, availableTasks: string[]): Promise<Job | null> {
+    const result = await this.pool.query(
+      `UPDATE jobs
+       SET status = 'running', worker_id = $1, attempts_made = attempts_made + 1,
+           updated_at = NOW(), last_heartbeat = NOW()
+       WHERE id = (
+         SELECT id FROM jobs
+         WHERE status = 'pending'
+         AND task_name = ANY($2)
+         AND run_at <= NOW()
+         ORDER BY priority DESC, created_at ASC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [workerId, availableTasks]
+    );
 
-      // Update all jobs in batch
-      for (const job of dbJobs) {
-        const updatedJob = await tx.job.update({
-          where: { id: job.id },
-          data: {
-            status: 'running',
-            workerId,
-            lastHeartbeat: new Date(),
-            attemptsMade: { increment: 1 },
-            updatedAt: new Date(),
-          },
-        });
-        
-        jobs.push(this.mapDbJobToJob(updatedJob));
-      }
-    });
+    if (result.rows.length === 0) return null;
+    return this.mapDbRowToJob(result.rows[0]);
+  }
 
-    return jobs;
+  async fetchNextBatch(workerId: string, availableTasks: string[], batchSize = 5): Promise<Job[]> {
+    const result = await this.pool.query(
+      `UPDATE jobs
+       SET status = 'running', worker_id = $1, attempts_made = attempts_made + 1,
+           updated_at = NOW(), last_heartbeat = NOW()
+       WHERE id IN (
+         SELECT id FROM jobs
+         WHERE status = 'pending'
+         AND task_name = ANY($2)
+         AND run_at <= NOW()
+         ORDER BY priority DESC, created_at ASC
+         LIMIT $3
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [workerId, availableTasks, batchSize]
+    );
+
+    return result.rows.map(this.mapDbRowToJob);
   }
 
   async completeJob(jobId: string, resultKey?: string): Promise<void> {
-    await this.prisma.job.update({
-      where: { id: jobId },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-        updatedAt: new Date(),
-        resultKey,
-        workerId: null, // Release the job from the worker
-      },
-    });
-  }
-
-  async failJob(jobId: string, error: Error): Promise<void> {
-    const job = await this.prisma.job.findUnique({
-      where: { id: jobId },
-    });
-
-    if (!job) {
-      throw new Error(`Job not found: ${jobId}`);
-    }
-
-    const shouldRetry = job.attemptsMade < job.maxAttempts;
-    
-    await this.prisma.job.update({
-      where: { id: jobId },
-      data: {
-        status: shouldRetry ? 'pending' : 'failed',
-        lastError: error.message || String(error),
-        updatedAt: new Date(),
-        workerId: null, // Release the job from the worker
-        // If retrying, schedule for later with exponential backoff
-        ...(shouldRetry && {
-          runAt: new Date(Date.now() + Math.pow(2, job.attemptsMade) * 1000),
-        }),
-      },
-    });
-  }
-
-  async updateJobProgress(jobId: string, progress: number): Promise<void> {
-    await this.prisma.job.update({
-      where: { id: jobId },
-      data: {
-        progress: Math.max(0, Math.min(100, progress)), // Ensure progress is between 0-100
-        updatedAt: new Date(),
-        lastHeartbeat: new Date(),
-      },
-    });
-  }
-
-  async updateJobsBatch(
-    updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>
-  ): Promise<void> {
-    await this.prisma.$transaction(
-      updates.map((update) => {
-        return this.prisma.job.update({
-          where: { id: update.jobId },
-          data: {
-            ...(update.status && { status: update.status }),
-            ...(update.progress !== undefined && { 
-              progress: Math.max(0, Math.min(100, update.progress)) 
-            }),
-            updatedAt: new Date(),
-            lastHeartbeat: new Date(),
-          },
-        });
-      })
+    await this.pool.query(
+      `UPDATE jobs
+       SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
+           result_key = $1, worker_id = NULL
+       WHERE id = $2`,
+      [resultKey, jobId]
     );
   }
 
-  async heartbeat(workerId: string, jobId?: string): Promise<void> {
-    const now = new Date();
-    
-    // Update worker heartbeat
-    await this.prisma.workerHeartbeat.upsert({
-      where: { workerId },
-      update: {
-        lastSeen: now,
-        currentJob: jobId,
-      },
-      create: {
-        workerId,
-        lastSeen: now,
-        currentJob: jobId,
-      },
-    });
-
-    // If jobId is provided, update job heartbeat too
-    if (jobId) {
-      await this.prisma.job.update({
-        where: { id: jobId },
-        data: {
-          lastHeartbeat: now,
-        },
-      });
-    }
+  async failJob(jobId: string, error: Error): Promise<void> {
+    await this.pool.query(
+      `UPDATE jobs
+       SET status = 'failed', last_error = $1, completed_at = NOW(),
+           updated_at = NOW(), worker_id = NULL
+       WHERE id = $2`,
+      [error.message, jobId]
+    );
   }
 
   async getJobById(jobId: string): Promise<Job | null> {
-    const job = await this.prisma.job.findUnique({
-      where: { id: jobId },
-    });
+    const result = await this.pool.query(
+      'SELECT * FROM jobs WHERE id = $1',
+      [jobId]
+    );
 
-    if (!job) return null;
-    
-    return this.mapDbJobToJob(job);
+    if (result.rows.length === 0) return null;
+    return this.mapDbRowToJob(result.rows[0]);
   }
 
-  async listJobs(
-    filter?: { status?: JobStatus; taskName?: string }
-  ): Promise<Job[]> {
-    const jobs = await this.prisma.job.findMany({
-      where: {
-        ...(filter?.status && { status: filter.status }),
-        ...(filter?.taskName && { taskName: filter.taskName }),
-      },
-      orderBy: [
-        { createdAt: 'desc' },
-      ],
-    });
-
-    return jobs.map(this.mapDbJobToJob);
+  async updateJobStatus(jobId: string, status: JobStatus, error?: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE jobs
+       SET status = $1, last_error = $2, updated_at = NOW(),
+           completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE completed_at END
+       WHERE id = $3`,
+      [status, error, jobId]
+    );
   }
 
-  async cleanupStaleJobs(): Promise<number> {
-    const staleThreshold = new Date(Date.now() - this.staleJobThreshold);
-    
-    const result = await this.prisma.job.updateMany({
-      where: {
-        status: 'running',
-        lastHeartbeat: { lt: staleThreshold },
-      },
-      data: {
-        status: 'pending',
-        workerId: null,
-      },
-    });
-
-    return result.count;
+  async updateJobProgress(jobId: string, progress: number): Promise<void> {
+    await this.pool.query(
+      'UPDATE jobs SET progress = $1, updated_at = NOW() WHERE id = $2',
+      [progress, jobId]
+    );
   }
 
   async storeResult(jobId: string, result: any): Promise<string> {
     const resultKey = `result-${jobId}-${uuidv4()}`;
-    
-    await this.prisma.jobResult.create({
-      data: {
-        key: resultKey,
-        jobId,
-        result: JSON.stringify(result),
-      },
-    });
-
+    await this.pool.query(
+      'INSERT INTO job_results (key, job_id, result) VALUES ($1, $2, $3)',
+      [resultKey, jobId, JSON.stringify(result)]
+    );
     return resultKey;
   }
 
   async getResult(resultKey: string): Promise<any> {
-    const result = await this.prisma.jobResult.findUnique({
-      where: { key: resultKey },
-    });
+    const result = await this.pool.query(
+      'SELECT result FROM job_results WHERE key = $1',
+      [resultKey]
+    );
 
-    if (!result) {
-      return null;
-    }
+    if (result.rows.length === 0) return null;
+    return JSON.parse(result.rows[0].result);
+  }
 
+  async updateJobsBatch(updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>): Promise<void> {
+    const client = await this.pool.connect();
     try {
-      return JSON.parse(result.result);
+      await client.query('BEGIN');
+      for (const update of updates) {
+        await client.query(
+          `UPDATE jobs
+           SET status = COALESCE($1, status),
+               progress = COALESCE($2, progress),
+               updated_at = NOW(),
+               completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE completed_at END
+           WHERE id = $3`,
+          [update.status, update.progress, update.jobId]
+        );
+      }
+      await client.query('COMMIT');
     } catch (error) {
-      console.error(`Error parsing result for key ${resultKey}:`, error);
-      return result.result;
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
-  async getQueueStats(): Promise<{
-    pendingCount: number;
-    runningCount: number;
-    completedCount: number;
-    failedCount: number;
-  }> {
-    const [pending, running, completed, failed] = await Promise.all([
-      this.prisma.job.count({ where: { status: 'pending' } }),
-      this.prisma.job.count({ where: { status: 'running' } }),
-      this.prisma.job.count({ where: { status: 'completed' } }),
-      this.prisma.job.count({ where: { status: 'failed' } }),
-    ]);
+  async heartbeat(workerId: string, jobId?: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO worker_heartbeats (worker_id, current_job, last_seen)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (worker_id) DO UPDATE
+       SET current_job = $2, last_seen = NOW()`,
+      [workerId, jobId]
+    );
+  }
 
+  async listJobs(filter?: { status?: JobStatus; taskName?: string }): Promise<Job[]> {
+    let query = 'SELECT * FROM jobs';
+    const params: any[] = [];
+    const conditions: string[] = [];
+
+    if (filter?.status) {
+      conditions.push('status = $1');
+      params.push(filter.status);
+    }
+    if (filter?.taskName) {
+      conditions.push('task_name = $' + (params.length + 1));
+      params.push(filter.taskName);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await this.pool.query(query, params);
+    return result.rows.map(this.mapDbRowToJob);
+  }
+
+  async cleanupStaleJobs(): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE jobs
+       SET status = 'failed', last_error = 'Job timed out',
+           updated_at = NOW(), completed_at = NOW()
+       WHERE status = 'running'
+       AND last_heartbeat < NOW() - INTERVAL '5 minutes'
+       RETURNING id`
+    );
+    return result.rowCount || 0;
+  }
+
+  async getQueueStats(): Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number }> {
+    const result = await this.pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') as pending_count,
+        COUNT(*) FILTER (WHERE status = 'running') as running_count,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed_count
+      FROM jobs
+    `);
+
+    const stats = result.rows[0];
     return {
-      pendingCount: pending,
-      runningCount: running,
-      completedCount: completed,
-      failedCount: failed,
+      pendingCount: parseInt(stats.pending_count) || 0,
+      runningCount: parseInt(stats.running_count) || 0,
+      completedCount: parseInt(stats.completed_count) || 0,
+      failedCount: parseInt(stats.failed_count) || 0
     };
   }
 
-  // Helper method to convert database job to Job interface
-  private mapDbJobToJob(dbJob: any): Job {
+  private mapDbRowToJob(row: any): Job {
     return {
-      id: dbJob.id,
-      taskName: dbJob.taskName,
-      payload: JSON.parse(dbJob.payload),
-      status: dbJob.status as JobStatus,
-      priority: dbJob.priority,
-      runAt: dbJob.runAt,
-      attemptsMade: dbJob.attemptsMade,
-      maxAttempts: dbJob.maxAttempts,
-      lastError: dbJob.lastError || undefined,
-      createdAt: dbJob.createdAt,
-      updatedAt: dbJob.updatedAt,
-      completedAt: dbJob.completedAt || undefined,
-      resultKey: dbJob.resultKey || undefined,
-      progress: dbJob.progress !== null ? dbJob.progress : undefined,
+      id: row.id,
+      taskName: row.task_name,
+      payload: JSON.parse(row.payload),
+      status: row.status as JobStatus,
+      priority: row.priority,
+      runAt: row.run_at,
+      attemptsMade: row.attempts_made,
+      maxAttempts: row.max_attempts,
+      lastError: row.last_error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+      resultKey: row.result_key,
+      progress: row.progress,
+      webhookUrl: row.webhook_url,
+      webhookHeaders: row.webhook_headers ? JSON.parse(row.webhook_headers) : undefined
     };
   }
 }
