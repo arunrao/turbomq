@@ -1,5 +1,32 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { SimpleAdapter } from '../../lib/simple-adapter';
+import { queue } from '../../lib/queue';
+
+// Rate limiting
+const RATE_LIMIT_WINDOW = 1000; // 1 second
+const MAX_REQUESTS = 10; // max requests per window
+const requestCounts = new Map<string, number[]>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW;
+  
+  // Get existing requests for this IP
+  let requests = requestCounts.get(ip) || [];
+  
+  // Remove old requests outside the window
+  requests = requests.filter(time => time > windowStart);
+  
+  // Check if we're over the limit
+  if (requests.length >= MAX_REQUESTS) {
+    return true;
+  }
+  
+  // Add new request
+  requests.push(now);
+  requestCounts.set(ip, requests);
+  
+  return false;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -7,60 +34,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { id } = req.query;
-  
   if (!id || typeof id !== 'string') {
     return res.status(400).json({ error: 'Job ID is required' });
   }
 
-  const adapter = new SimpleAdapter();
+  // Rate limiting
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  if (isRateLimited(ip as string)) {
+    return res.status(429).json({ 
+      error: 'Too many requests',
+      retryAfter: RATE_LIMIT_WINDOW / 1000
+    });
+  }
 
   try {
-    await adapter.init();
-    
-    // Get job by ID
-    const job = await adapter.getJobById(id);
-    
+    const job = await queue.getJobById(id);
     if (!job) {
-      // Return a more graceful response for non-existent jobs
-      return res.status(200).json({
-        id,
-        status: 'completed',
-        progress: 100,
-        isCompleted: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        result: { message: 'Job not found or was deleted' }
-      });
+      return res.status(404).json({ error: 'Job not found' });
     }
-    
-    // Get job result if available
-    let result = null;
-    if (job.resultKey && job.status === 'completed') {
-      result = await adapter.getJobResult(job.resultKey);
-    }
-    
-    // Add a flag to indicate if the job is completed or failed
-    const isCompleted = job.status === 'completed' || job.status === 'failed';
-    
-    return res.status(200).json({
-      id: job.id,
-      status: job.status,
-      progress: job.progress,
-      result,
-      createdAt: job.createdAt,
-      updatedAt: job.updatedAt,
-      webhookUrl: job.webhookUrl,
-      isCompleted,
-    });
+    return res.status(200).json(job);
   } catch (error) {
-    console.error('Job status error:', error);
-    return res.status(500).json({ error: 'Failed to get job status' });
-  } finally {
-    // Clean up adapter connection
-    try {
-      await adapter.shutdown();
-    } catch (error) {
-      console.error('Error shutting down adapter:', error);
-    }
+    console.error('Error fetching job status:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }

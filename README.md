@@ -25,6 +25,11 @@ For PostgreSQL support (optional):
 npm install pg pg-pool
 ```
 
+For WebSocket support (required for real-time updates):
+```bash
+npm install socket.io socket.io-client
+```
+
 ## Quick Start
 
 ### Using Prisma (Default)
@@ -71,6 +76,36 @@ const job = await queue.addJob('process-file', {
 const status = await queue.getJobStatus(job.id);
 ```
 
+## Database Adapters
+
+### PrismaAdapter (Default)
+- Works in both browser and Node.js environments
+- Uses Prisma ORM for database operations
+- Requires Prisma setup
+- Recommended for most use cases
+
+### PostgresAdapter
+- **Important**: Only works in Node.js environments, not in browsers
+- Direct PostgreSQL connection
+- Requires `pg` and `pg-pool` packages
+- Better performance for high-throughput applications
+- Not suitable for browser-based applications
+
+## Browser Example
+
+Check out the [browser example](examples/browser-example) for a complete implementation using:
+- Next.js for the frontend
+- SQLite for data storage
+- Socket.IO for real-time updates
+- Prisma for database operations
+
+The browser example demonstrates:
+- Job creation and status tracking
+- Real-time updates via WebSocket
+- Progress tracking
+- Webhook notifications
+- Error handling
+
 ## API Reference
 
 ### Queue
@@ -93,26 +128,6 @@ interface JobOptions {
   maxAttempts?: number;
   webhookUrl?: string;
   webhookHeaders?: Record<string, string>;
-}
-```
-
-### Database Adapters
-
-#### PrismaAdapter
-Uses Prisma ORM for database operations. Requires Prisma setup.
-
-#### PostgresAdapter
-Direct PostgreSQL connection. Requires `pg` and `pg-pool` packages.
-
-```typescript
-interface PostgresConfig {
-  host?: string;
-  port?: number;
-  database?: string;
-  user?: string;
-  password?: string;
-  ssl?: boolean;
-  // ... other pg-pool options
 }
 ```
 

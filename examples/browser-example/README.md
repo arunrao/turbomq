@@ -1,17 +1,29 @@
 # Browser Example
 
-This example demonstrates how to use the Next Queue client library in a browser environment.
+This example demonstrates how to use the queue system in a browser environment.
 
-## Features
+## Database Adapters
 
-- Job creation and status tracking
-- Real-time updates via WebSocket
-- Progress tracking
-- Webhook notifications
-- Error handling
-- Clean UI with status display
+### SQLite (Default)
+- Used by default in this browser example
+- Works in both browser and Node.js environments
+- No additional configuration needed
 
-## Setup
+### PostgreSQL
+- Available as an optional adapter
+- **Important**: Only works in Node.js environments, not in browsers
+- If you need PostgreSQL:
+  1. Install the pg package: `npm install pg`
+  2. Set up your database connection string in .env
+  3. Use the PostgresAdapter in your Node.js code
+
+## Why SQLite for Browser?
+The browser example uses SQLite because:
+1. It works in browser environments
+2. Doesn't require external database connections
+3. Avoids WebSocket implementation issues that occur with PostgreSQL in browsers
+
+## Getting Started
 
 1. Install dependencies:
 ```bash
@@ -20,13 +32,50 @@ npm install
 
 2. Set up the database:
 ```bash
-npm run setup-db
+npm run db:setup
 ```
 
 3. Start the development server:
 ```bash
 npm run dev
 ```
+
+## Available Scripts
+
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run cleanup` - Clean up the database
+- `npm run schema:check` - Check database schema
+- `npm run db:setup` - Set up database and schema
+
+## Features
+
+- Job queue management
+- Real-time job status updates
+- Progress tracking
+- Webhook notifications
+- Job result storage
+
+## Architecture
+
+The example uses:
+- Next.js for the frontend
+- SQLite for data storage
+- Socket.IO for real-time updates
+- Prisma for database operations
+
+## Environment Variables
+
+Create a `.env` file with:
+```
+DATABASE_URL="file:./prisma/dev.db"
+NEXT_RUNTIME_ENV="development"
+```
+
+## Contributing
+
+Feel free to submit issues and enhancement requests!
 
 ## Usage
 

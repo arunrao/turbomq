@@ -1,43 +1,22 @@
-import { Pool, PoolConfig } from 'pg';
-import { DbAdapter, Job, JobOptions, JobStatus } from '../types';
+import { Pool } from 'pg';
+import { DbAdapter, Job, JobOptions, JobStatus } from '../../../src/types';
 import { v4 as uuidv4 } from 'uuid';
-import { createSchema, inspectSchema, migrateSchema, SchemaIssue } from '../schema';
 
-export interface PostgresAdapterConfig extends PoolConfig {
-  createSchema?: boolean;
-  schemaVersion?: string;
-}
-
-/**
- * PostgreSQL adapter for the Next.js job queue system.
- * Works with both local PostgreSQL instances and Neon (which requires SSL).
- */
 export class PostgresAdapter implements DbAdapter {
   private pool: Pool;
   private connected = false;
-  private config: PostgresAdapterConfig;
 
-  /**
-   * Create a new PostgreSQL adapter.
-   * @param config Optional configuration options
-   */
-  constructor(config?: PostgresAdapterConfig) {
-    this.config = config || {};
-    this.pool = new Pool(config);
+  constructor(config?: { connectionString?: string; ssl?: boolean }) {
+    this.pool = new Pool({
+      connectionString: config?.connectionString || process.env.DATABASE_URL,
+      ssl: config?.ssl
+    });
   }
 
   async connect(): Promise<void> {
     if (!this.connected) {
       await this.pool.connect();
       this.connected = true;
-      
-      if (this.config.createSchema) {
-        await createSchema(this.pool);
-      }
-      
-      if (this.config.schemaVersion) {
-        await migrateSchema(this.pool, '1.0.0', this.config.schemaVersion);
-      }
     }
   }
 
@@ -46,10 +25,6 @@ export class PostgresAdapter implements DbAdapter {
       await this.pool.end();
       this.connected = false;
     }
-  }
-
-  async inspectSchema(): Promise<SchemaIssue[]> {
-    return inspectSchema(this.pool);
   }
 
   async createJob(taskName: string, payload: any, options?: JobOptions): Promise<Job> {
@@ -154,6 +129,13 @@ export class PostgresAdapter implements DbAdapter {
     );
   }
 
+  async updateJobProgress(jobId: string, progress: number): Promise<void> {
+    await this.pool.query(
+      'UPDATE jobs SET progress = $1, updated_at = NOW() WHERE id = $2',
+      [progress, jobId]
+    );
+  }
+
   async getJobById(jobId: string): Promise<Job | null> {
     const result = await this.pool.query(
       'SELECT * FROM jobs WHERE id = $1',
@@ -162,23 +144,6 @@ export class PostgresAdapter implements DbAdapter {
 
     if (result.rows.length === 0) return null;
     return this.mapDbRowToJob(result.rows[0]);
-  }
-
-  async updateJobStatus(jobId: string, status: JobStatus, error?: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE jobs
-       SET status = $1, last_error = $2, updated_at = NOW(),
-           completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE completed_at END
-       WHERE id = $3`,
-      [status, error, jobId]
-    );
-  }
-
-  async updateJobProgress(jobId: string, progress: number): Promise<void> {
-    await this.pool.query(
-      'UPDATE jobs SET progress = $1, updated_at = NOW() WHERE id = $2',
-      [progress, jobId]
-    );
   }
 
   async storeResult(jobId: string, result: any): Promise<string> {
@@ -289,6 +254,16 @@ export class PostgresAdapter implements DbAdapter {
     };
   }
 
+  async updateJobStatus(jobId: string, status: JobStatus, error?: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE jobs
+       SET status = $1, last_error = $2, updated_at = NOW(),
+           completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE completed_at END
+       WHERE id = $3`,
+      [status, error, jobId]
+    );
+  }
+
   private mapDbRowToJob(row: any): Job {
     return {
       id: row.id,
@@ -309,4 +284,4 @@ export class PostgresAdapter implements DbAdapter {
       webhookHeaders: row.webhook_headers ? JSON.parse(row.webhook_headers) : undefined
     };
   }
-}
+} 

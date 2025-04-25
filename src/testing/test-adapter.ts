@@ -38,43 +38,46 @@ export class TestAdapter implements DbAdapter {
   }
 
   async fetchNextJob(workerId: string, availableTasks: string[]): Promise<Job | null> {
-    const pendingJobs = Array.from(this.jobs.values())
-      .filter(job => 
-        job.status === 'pending' && 
+    const now = new Date();
+    const jobs = Array.from(this.jobs.values());
+    const pendingJobs = jobs
+      .filter((job: Job) => 
+        job.status === 'pending' &&
         availableTasks.includes(job.taskName) &&
-        job.runAt <= new Date()
+        (job.runAt || now) <= now
       )
-      .sort((a, b) => b.priority - a.priority);
-
-    if (pendingJobs.length === 0) return null;
+      .sort((a: Job, b: Job) => (b.priority || 0) - (a.priority || 0));
 
     const job = pendingJobs[0];
+    if (!job) return null;
+
     job.status = 'running';
     job.workerId = workerId;
-    job.attemptsMade++;
-    job.updatedAt = new Date();
+    job.attemptsMade = (job.attemptsMade || 0) + 1;
+    job.updatedAt = now;
 
     return job;
   }
 
   async fetchNextBatch(workerId: string, availableTasks: string[], batchSize = 5): Promise<Job[]> {
-    const pendingJobs = Array.from(this.jobs.values())
-      .filter(job => 
-        job.status === 'pending' && 
+    const now = new Date();
+    const jobs = Array.from(this.jobs.values())
+      .filter((job: Job) => 
+        job.status === 'pending' &&
         availableTasks.includes(job.taskName) &&
-        job.runAt <= new Date()
+        (job.runAt || now) <= now
       )
-      .sort((a, b) => b.priority - a.priority)
+      .sort((a: Job, b: Job) => (b.priority || 0) - (a.priority || 0))
       .slice(0, batchSize);
 
-    for (const job of pendingJobs) {
+    for (const job of jobs) {
       job.status = 'running';
       job.workerId = workerId;
-      job.attemptsMade++;
-      job.updatedAt = new Date();
+      job.attemptsMade = (job.attemptsMade || 0) + 1;
+      job.updatedAt = now;
     }
 
-    return pendingJobs;
+    return jobs;
   }
 
   async completeJob(jobId: string, resultKey?: string): Promise<void> {

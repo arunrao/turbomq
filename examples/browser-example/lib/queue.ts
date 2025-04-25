@@ -4,6 +4,15 @@ import { createQueue as createQueueFromLib } from '../../../src';
 import { JobRegistry } from '../../../src/job-registry';
 import { projectJobTypes } from './job-types';
 
+// Optional PostgreSQL adapter
+let _PostgresAdapter: any;
+try {
+  const module = await import('./postgres-adapter');
+  _PostgresAdapter = module.PostgresAdapter;
+} catch (error) {
+  // PostgreSQL adapter not available
+}
+
 // PrismaAdapter class for database operations
 export class PrismaAdapter implements DbAdapter {
   private prisma: PrismaClient;
@@ -281,6 +290,18 @@ export class PrismaAdapter implements DbAdapter {
     ]);
     return { pendingCount: pending, runningCount: running, completedCount: completed, failedCount: failed };
   }
+
+  async updateJobStatus(jobId: string, status: JobStatus, error?: string): Promise<void> {
+    await this.prisma.job.update({
+      where: { id: jobId },
+      data: {
+        status,
+        lastError: error,
+        updatedAt: new Date(),
+        completedAt: status === 'completed' || status === 'failed' ? new Date() : undefined
+      }
+    });
+  }
 }
 
 // Job status types
@@ -343,6 +364,7 @@ export interface DbAdapter {
   listJobs: (filter?: { status?: JobStatus; taskName?: string }) => Promise<Job[]>;
   cleanupStaleJobs: () => Promise<number>;
   getQueueStats: () => Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number }>;
+  updateJobStatus: (jobId: string, status: JobStatus, error?: string) => Promise<void>;
 }
 
 // Event manager for job events
