@@ -1,5 +1,10 @@
 // Types
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
+export enum JobStatus {
+  PENDING = 'pending',
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  FAILED = 'failed'
+}
 
 export interface Job<T = any> {
   id: string;
@@ -13,9 +18,14 @@ export interface Job<T = any> {
   lastError?: string;
   createdAt: Date;
   updatedAt: Date;
+  scheduledAt?: Date;
+  startedAt?: Date;
   completedAt?: Date;
-  resultKey?: string;
+  failedAt?: Date;
+  error?: string;
+  retries: number;
   progress?: number;
+  resultKey?: string;
   webhookUrl?: string;
   webhookHeaders?: Record<string, string>;
 }
@@ -52,9 +62,42 @@ export interface DbAdapter {
   getResult(resultKey: string): Promise<any>;
   updateJobsBatch(updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>): Promise<void>;
   heartbeat(workerId: string, jobId?: string): Promise<void>;
-  listJobs<T = any>(filter?: { status?: JobStatus; taskName?: string }): Promise<Job<T>[]>;
+  listJobs<T = any>(filter?: { 
+    status?: JobStatus; 
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    orderBy?: 'createdAt' | 'updatedAt' | 'runAt';
+    order?: 'asc' | 'desc';
+  }): Promise<Job<T>[]>;
   cleanupStaleJobs(): Promise<number>;
   getQueueStats(): Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number }>;
+  removeJobsByStatus(
+    status: JobStatus,
+    options?: {
+      taskName?: string;
+      beforeDate?: Date;
+      limit?: number;
+    }
+  ): Promise<number>;
+  getDetailedJobInfo(options?: {
+    status?: JobStatus;
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    includeResults?: boolean;
+    includeErrors?: boolean;
+    includeProgress?: boolean;
+  }): Promise<{
+    jobs: Job<any>[];
+    total: number;
+    stats: {
+      byStatus: Record<string, number>;
+      byTask: Record<string, number>;
+      averageProcessingTime?: number;
+      successRate?: number;
+    };
+  }>;
 }
 
 // Environment Configuration
@@ -86,4 +129,23 @@ export interface StorageAdapter {
   storeFile(content: Buffer, metadata: Record<string, any>): Promise<string>;
   storeFileStream(stream: NodeJS.ReadableStream, metadata: Record<string, any>): Promise<string>;
   deleteFile(identifier: string): Promise<void>;
+}
+
+export interface JobAdapter {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  inspectSchema(): Promise<void>;
+  createJob(job: Job): Promise<void>;
+  fetchNextJob(taskName: string): Promise<Job | null>;
+  completeJob(jobId: string): Promise<void>;
+  failJob(jobId: string, error: string): Promise<void>;
+  removeJobsByStatus(status: JobStatus, options?: { 
+    taskName?: string; 
+    before?: Date;
+    limit?: number;
+  }): Promise<number>;
+  getJobStats(): Promise<{ 
+    byStatus: Record<string, number>; 
+    byTask: Record<string, number> 
+  }>;
 }

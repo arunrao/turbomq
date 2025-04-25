@@ -49,11 +49,12 @@ export class PrismaAdapter implements DbAdapter {
     return this.mapDbJobToJob(job);
   }
 
-  async fetchNextJob(): Promise<Job | null> {
+  async fetchNextJob(workerId: string, availableTasks: string[]): Promise<Job | null> {
     const job = await this.prisma.job.findFirst({
       where: {
         status: 'pending',
-        runAt: { lte: new Date() }
+        runAt: { lte: new Date() },
+        taskName: { in: availableTasks }
       },
       orderBy: [
         { priority: 'desc' },
@@ -62,7 +63,18 @@ export class PrismaAdapter implements DbAdapter {
     });
 
     if (!job) return null;
-    return this.mapDbJobToJob(job);
+
+    // Update worker ID for fetched job
+    const updatedJob = await this.prisma.job.update({
+      where: { id: job.id },
+      data: {
+        workerId,
+        status: 'running',
+        updatedAt: new Date()
+      }
+    });
+
+    return this.mapDbJobToJob(updatedJob);
   }
 
   async fetchNextBatch(workerId: string, availableTasks: string[], batchSize = 10): Promise<Job[]> {
@@ -163,23 +175,31 @@ export class PrismaAdapter implements DbAdapter {
       this.prisma.job.count({ where: { status: 'pending' } }),
       this.prisma.job.count({ where: { status: 'running' } }),
       this.prisma.job.count({ where: { status: 'completed' } }),
-      this.prisma.job.count({ where: { status: 'failed' } })
+      this.prisma.job.count({ where: { status: 'failed' } }),
     ]);
 
-    return { pendingCount: pending, runningCount: running, completedCount: completed, failedCount: failed };
+    return {
+      pendingCount: pending,
+      runningCount: running,
+      completedCount: completed,
+      failedCount: failed,
+    };
   }
 
-  async completeJob(jobId: string, result: any): Promise<void> {
-    const resultKey = await this.storeJobResult(jobId, result);
-    await this.updateJobStatus(jobId, 'completed');
+  async completeJob(jobId: string, resultKey?: string): Promise<void> {
     await this.prisma.job.update({
       where: { id: jobId },
-      data: { resultKey }
+      data: {
+        status: 'completed',
+        resultKey,
+        completedAt: new Date(),
+        updatedAt: new Date()
+      }
     });
   }
 
   async failJob(jobId: string, error: Error): Promise<void> {
-    await this.updateJobStatus(jobId, 'failed', error.message);
+    await this.updateJobStatus(jobId, JobStatus.FAILED, error.message);
   }
 
   async updateJobsBatch(updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>): Promise<void> {
@@ -259,6 +279,75 @@ export class PrismaAdapter implements DbAdapter {
     return JSON.parse(result.result);
   }
 
+  async removeJobsByStatus(
+    status: JobStatus,
+    options?: { taskName?: string; beforeDate?: Date; limit?: number }
+  ): Promise<number> {
+    const result = await this.prisma.job.deleteMany({
+      where: {
+        status,
+        ...(options?.taskName && { taskName: options.taskName }),
+        ...(options?.beforeDate && { createdAt: { lt: options.beforeDate } }),
+      }
+    });
+    return result.count;
+  }
+
+  async getDetailedJobInfo(options?: {
+    status?: JobStatus;
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    includeResults?: boolean;
+    includeErrors?: boolean;
+    includeProgress?: boolean;
+  }): Promise<{
+    jobs: Job[];
+    total: number;
+    stats: {
+      byStatus: Record<string, number>;
+      byTask: Record<string, number>;
+      averageProcessingTime?: number;
+      successRate?: number;
+    };
+  }> {
+    const [jobs, total, stats] = await Promise.all([
+      this.prisma.job.findMany({
+        where: {
+          ...(options?.status && { status: options.status }),
+          ...(options?.taskName && { taskName: options.taskName }),
+        },
+        ...(options?.limit && { take: options.limit }),
+        ...(options?.offset && { skip: options.offset }),
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.job.count({
+        where: {
+          ...(options?.status && { status: options.status }),
+          ...(options?.taskName && { taskName: options.taskName }),
+        },
+      }),
+      this.prisma.job.groupBy({
+        by: ['status', 'taskName'],
+        _count: true,
+      }),
+    ]);
+
+    const byStatus: Record<string, number> = {};
+    const byTask: Record<string, number> = {};
+
+    stats.forEach((stat: { status: string; taskName: string; _count: number }) => {
+      byStatus[stat.status] = (byStatus[stat.status] || 0) + stat._count;
+      byTask[stat.taskName] = (byTask[stat.taskName] || 0) + stat._count;
+    });
+
+    return {
+      jobs: jobs.map(this.mapDbJobToJob),
+      total,
+      stats: { byStatus, byTask },
+    };
+  }
+
   private mapDbJobToJob(dbJob: any): Job {
     return {
       id: dbJob.id,
@@ -276,7 +365,8 @@ export class PrismaAdapter implements DbAdapter {
       resultKey: dbJob.resultKey || undefined,
       progress: dbJob.progress || undefined,
       webhookUrl: dbJob.webhookUrl || undefined,
-      webhookHeaders: dbJob.webhookHeaders ? JSON.parse(dbJob.webhookHeaders) : undefined
+      webhookHeaders: dbJob.webhookHeaders ? JSON.parse(dbJob.webhookHeaders) : undefined,
+      retries: dbJob.attemptsMade || 0
     };
   }
 } 

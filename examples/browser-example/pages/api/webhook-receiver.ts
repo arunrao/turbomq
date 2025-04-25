@@ -1,5 +1,5 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import type { NextApiResponseServerIO } from '../../lib/types';
+import type { NextApiRequest } from 'next';
+import type { NextApiResponseServerIO } from '../../lib/types.js';
 
 export default async function handler(
   req: NextApiRequest,

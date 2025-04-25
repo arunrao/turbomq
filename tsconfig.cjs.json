@@ -3,8 +3,7 @@
   "compilerOptions": {
     "module": "CommonJS",
     "outDir": "./dist",
-    "declaration": true,
-    "moduleResolution": "node"
+    "declaration": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

@@ -1,17 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
-import { createQueue as createQueueFromLib } from '../../../src';
-import { JobRegistry } from '../../../src/job-registry';
-import { projectJobTypes } from './job-types';
-
-// Optional PostgreSQL adapter
-let _PostgresAdapter: any;
-try {
-  const module = await import('./postgres-adapter');
-  _PostgresAdapter = module.PostgresAdapter;
-} catch (error) {
-  // PostgreSQL adapter not available
-}
+import { createQueue as createQueueFromLib } from '../../../src/index.js';
+import { JobRegistry } from '../../../src/job-registry.js';
+import { projectJobTypes } from './job-types.js';
+import { Job, JobStatus, JobHandler, JobHelpers, JobOptions, DbAdapter } from '../../../src/types';
 
 // PrismaAdapter class for database operations
 export class PrismaAdapter implements DbAdapter {
@@ -43,7 +35,7 @@ export class PrismaAdapter implements DbAdapter {
         taskName,
         payload: JSON.stringify(payload),
         status: 'pending',
-        priority: options?.priority || 0,
+        priority: options?.priority ?? 0,
         runAt: options?.runAt || now,
         maxAttempts: options?.maxAttempts || 3,
         createdAt: now,
@@ -221,6 +213,7 @@ export class PrismaAdapter implements DbAdapter {
       progress: dbJob.progress !== null ? dbJob.progress : undefined,
       webhookUrl: dbJob.webhookUrl || undefined,
       webhookHeaders: dbJob.webhookHeaders ? JSON.parse(dbJob.webhookHeaders) : undefined,
+      retries: dbJob.attemptsMade || 0
     };
   }
 
@@ -302,69 +295,97 @@ export class PrismaAdapter implements DbAdapter {
       }
     });
   }
-}
 
-// Job status types
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
+  async removeJobsByStatus(
+    status: JobStatus,
+    options?: { taskName?: string; beforeDate?: Date; limit?: number }
+  ): Promise<number> {
+    // Note: Prisma's deleteMany doesn't support limiting the number of records to delete
+    // If a limit is specified, we'll first find the IDs of jobs to delete
+    if (options?.limit) {
+      const jobsToDelete = await this.prisma.job.findMany({
+        where: {
+          status,
+          ...(options?.taskName && { taskName: options.taskName }),
+          ...(options?.beforeDate && { createdAt: { lt: options.beforeDate } }),
+        },
+        take: options.limit,
+        select: { id: true },
+      });
 
-// Job interface
-export interface Job {
-  id: string;
-  taskName: string;
-  payload: any;
-  status: JobStatus;
-  priority: number;
-  runAt: Date;
-  attemptsMade: number;
-  maxAttempts: number;
-  lastError?: string;
-  createdAt: Date;
-  updatedAt: Date;
-  completedAt?: Date;
-  resultKey?: string;
-  progress?: number;
-  webhookUrl?: string;
-  webhookHeaders?: Record<string, string>;
-}
+      const result = await this.prisma.job.deleteMany({
+        where: {
+          id: { in: jobsToDelete.map(job => job.id) },
+        },
+      });
+      return result.count;
+    }
 
-// Job options interface
-export interface JobOptions {
-  priority?: number;
-  runAt?: Date;
-  maxAttempts?: number;
-  webhookUrl?: string;
-  webhookHeaders?: Record<string, string>;
-}
+    // If no limit is specified, delete all matching jobs
+    const result = await this.prisma.job.deleteMany({
+      where: {
+        status,
+        ...(options?.taskName && { taskName: options.taskName }),
+        ...(options?.beforeDate && { createdAt: { lt: options.beforeDate } }),
+      },
+    });
+    return result.count;
+  }
 
-// Job helpers interface
-export interface JobHelpers {
-  updateProgress: (progress: number) => Promise<void>;
-  getJobDetails: () => Promise<Job>;
-  storeResult: (result: any) => Promise<string>;
-}
+  async getDetailedJobInfo(options?: {
+    status?: JobStatus;
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    includeResults?: boolean;
+    includeErrors?: boolean;
+    includeProgress?: boolean;
+  }): Promise<{
+    jobs: Job[];
+    total: number;
+    stats: {
+      byStatus: Record<string, number>;
+      byTask: Record<string, number>;
+      averageProcessingTime?: number;
+      successRate?: number;
+    };
+  }> {
+    const [jobs, total, stats] = await Promise.all([
+      this.prisma.job.findMany({
+        where: {
+          ...(options?.status && { status: options.status }),
+          ...(options?.taskName && { taskName: options.taskName }),
+        },
+        ...(options?.limit && { take: options.limit }),
+        ...(options?.offset && { skip: options.offset }),
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.job.count({
+        where: {
+          ...(options?.status && { status: options.status }),
+          ...(options?.taskName && { taskName: options.taskName }),
+        },
+      }),
+      this.prisma.job.groupBy({
+        by: ['status', 'taskName'],
+        _count: true,
+      }),
+    ]);
 
-// Job handler type
-export type JobHandler = (payload: any, helpers: JobHelpers) => Promise<any>;
+    const byStatus: Record<string, number> = {};
+    const byTask: Record<string, number> = {};
 
-// Database adapter interface
-export interface DbAdapter {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  createJob: (taskName: string, payload: any, options?: JobOptions) => Promise<Job>;
-  fetchNextJob: (workerId: string, availableTasks: string[]) => Promise<Job | null>;
-  fetchNextBatch: (workerId: string, availableTasks: string[], batchSize?: number) => Promise<Job[]>;
-  completeJob: (jobId: string, resultKey?: string) => Promise<void>;
-  failJob: (jobId: string, error: Error) => Promise<void>;
-  updateJobProgress: (jobId: string, progress: number) => Promise<void>;
-  getJobById: (jobId: string) => Promise<Job | null>;
-  getResult: (resultKey: string) => Promise<any>;
-  storeResult: (jobId: string, result: any) => Promise<string>;
-  updateJobsBatch: (updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>) => Promise<void>;
-  heartbeat: (workerId: string, jobId?: string) => Promise<void>;
-  listJobs: (filter?: { status?: JobStatus; taskName?: string }) => Promise<Job[]>;
-  cleanupStaleJobs: () => Promise<number>;
-  getQueueStats: () => Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number }>;
-  updateJobStatus: (jobId: string, status: JobStatus, error?: string) => Promise<void>;
+    stats.forEach((stat: { status: string; taskName: string; _count: number }) => {
+      byStatus[stat.status] = (byStatus[stat.status] || 0) + stat._count;
+      byTask[stat.taskName] = (byTask[stat.taskName] || 0) + stat._count;
+    });
+
+    return {
+      jobs: jobs.map(this.mapDbJobToJob),
+      total,
+      stats: { byStatus, byTask },
+    };
+  }
 }
 
 // Event manager for job events
@@ -412,41 +433,25 @@ export class EventManager {
 // Webhook service for sending notifications
 export class WebhookService {
   static async sendNotification(job: Job, result?: any): Promise<boolean> {
-    if (!job.webhookUrl) {
-      return false;
-    }
+    if (!job.webhookUrl) return false;
 
     try {
-      // Prepare webhook payload
-      const payload = {
-        jobId: job.id,
-        taskName: job.taskName,
-        status: job.status,
-        progress: job.progress || 0,
-        createdAt: job.createdAt,
-        updatedAt: job.updatedAt,
-        completedAt: job.completedAt,
-        result: result || null,
-      };
-
-      // Set default headers
-      const headers = {
-        'Content-Type': 'application/json',
-        'User-Agent': 'NextQueue-Webhook/1.0',
-        ...(job.webhookHeaders || {}),
-      };
-
-      // Send the webhook
       const response = await fetch(job.webhookUrl, {
         method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-webhook': 'true'
+        },
+        body: JSON.stringify({
+          jobId: job.id,
+          status: job.status,
+          result
+        })
       });
-      
-      console.log(`Webhook sent for job ${job.id} to ${job.webhookUrl}, status: ${response.status}`);
-      return response.status >= 200 && response.status < 300;
+
+      return response.ok;
     } catch (error) {
-      console.error(`Webhook failed for job ${job.id}:`, error);
+      console.error('Failed to send webhook notification:', error);
       return false;
     }
   }
@@ -488,6 +493,8 @@ export class WebhookService {
 export class Queue {
   private handlers: Map<string, JobHandler> = new Map();
   private events: EventManager;
+  private activeJobs: Set<string> = new Set();
+  private jobHandlers: Map<string, { abortController: AbortController; cleanup?: () => Promise<void> }> = new Map();
   
   constructor(private db: DbAdapter) {
     this.events = new EventManager();
@@ -519,47 +526,77 @@ export class Queue {
     return job;
   }
 
-  async processJob(workerId: string, job: Job): Promise<void> {
-    const handler = this.handlers.get(job.taskName);
-    if (!handler) {
-      throw new Error(`No handler found for task: ${job.taskName}`);
-    }
-
-    const helpers: JobHelpers = {
-      updateProgress: async (progress: number) => {
-        await this.db.updateJobProgress(job.id, progress);
-        
-        // Fetch updated job for event
-        const updatedJob = await this.db.getJobById(job.id);
-        if (updatedJob) {
-          this.events.emitJobProgress(updatedJob, progress);
-          
-          // Send webhook notification for progress update if URL is configured
-          if (updatedJob.webhookUrl) {
-            WebhookService.sendWithRetry(updatedJob).catch(error => {
-              console.error(`Failed to send progress webhook for job ${updatedJob.id}:`, error);
-            });
-          }
-        }
-      },
-      getJobDetails: async () => {
-        const updatedJob = await this.db.getJobById(job.id);
-        if (!updatedJob) throw new Error(`Job not found: ${job.id}`);
-        return updatedJob;
-      },
-      storeResult: async (_result: any) => {
-        // In this simplified version, we'll just return a key
-        return `result-${job.id}-${uuidv4()}`;
-      }
-    };
-
+  async processJob<T>(workerId: string, job: Job<T>): Promise<void> {
+    this.activeJobs.add(job.id);
+    
+    // Create abort controller for this job
+    const abortController = new AbortController();
+    this.jobHandlers.set(job.id, { abortController });
+    
     try {
+      const handler = this.handlers.get(job.taskName) as JobHandler<T>;
+      if (!handler) {
+        throw new Error(`No handler found for task: ${job.taskName}`);
+      }
+
+      const helpers: JobHelpers<T> = {
+        updateProgress: async (progress: number) => {
+          if (abortController.signal.aborted) {
+            throw new Error('Job was killed');
+          }
+          await this.db.updateJobProgress(job.id, progress);
+          
+          // Fetch updated job for event
+          const updatedJob = await this.db.getJobById<T>(job.id);
+          if (updatedJob) {
+            this.events.emitJobProgress(updatedJob, progress);
+            
+            // Send webhook notification for progress update if URL is configured
+            if (updatedJob.webhookUrl) {
+              WebhookService.sendWithRetry(updatedJob).catch(error => {
+                console.error(`Failed to send progress webhook for job ${updatedJob.id}:`, error);
+              });
+            }
+          }
+        },
+        getJobDetails: async () => {
+          if (abortController.signal.aborted) {
+            throw new Error('Job was killed');
+          }
+          const updatedJob = await this.db.getJobById<T>(job.id);
+          if (!updatedJob) throw new Error(`Job not found: ${job.id}`);
+          return updatedJob;
+        },
+        storeResult: async (result: any) => {
+          if (abortController.signal.aborted) {
+            throw new Error('Job was killed');
+          }
+          return await this.db.storeResult(job.id, result);
+        },
+        // Add cleanup function to helpers
+        cleanup: async () => {
+          // This will be called when the job is killed
+          console.log(`Cleaning up job ${job.id}...`);
+          // Add any cleanup logic here
+        }
+      };
+
+      // Update worker ID and status in job
+      await this.db.updateJobsBatch([{ jobId: job.id, status: JobStatus.RUNNING }]);
+      await this.db.heartbeat(workerId, job.id);
+      
+      // Add cleanup function to handler
+      const jobHandler = this.jobHandlers.get(job.id);
+      if (jobHandler) {
+        jobHandler.cleanup = helpers.cleanup;
+      }
+      
       const result = await handler(job.payload, helpers);
       const resultKey = await this.db.storeResult(job.id, result);
       await this.db.completeJob(job.id, resultKey);
       
       // Fetch updated job
-      const updatedJob = await this.db.getJobById(job.id);
+      const updatedJob = await this.db.getJobById<T>(job.id);
       if (updatedJob) {
         this.events.emitJobCompleted(updatedJob);
         
@@ -571,23 +608,30 @@ export class Queue {
         }
       }
     } catch (error) {
-      await this.db.failJob(job.id, error as Error);
-      
-      // Fetch updated job
-      const updatedJob = await this.db.getJobById(job.id);
-      if (updatedJob) {
-        this.events.emitJobFailed(updatedJob, error as Error);
+      if (error instanceof Error && error.message === 'Job was killed') {
+        console.log(`Job ${job.id} was killed during execution`);
+      } else {
+        await this.db.failJob(job.id, error as Error);
         
-        // Send webhook notification for failed job if URL is configured
-        if (updatedJob.webhookUrl) {
-          WebhookService.sendWithRetry(updatedJob, { 
-            error: (error as Error).message,
-            stack: (error as Error).stack
-          }).catch(webhookError => {
-            console.error(`Failed to send webhook for failed job ${updatedJob.id}:`, webhookError);
-          });
+        // Fetch updated job
+        const updatedJob = await this.db.getJobById<T>(job.id);
+        if (updatedJob) {
+          this.events.emitJobFailed(updatedJob, error as Error);
+          
+          // Send webhook notification for failed job if URL is configured
+          if (updatedJob.webhookUrl) {
+            WebhookService.sendWithRetry(updatedJob, { 
+              error: (error as Error).message,
+              stack: (error as Error).stack
+            }).catch(webhookError => {
+              console.error(`Failed to send webhook for failed job ${updatedJob.id}:`, webhookError);
+            });
+          }
         }
       }
+    } finally {
+      this.activeJobs.delete(job.id);
+      this.jobHandlers.delete(job.id);
     }
   }
 
@@ -620,6 +664,28 @@ export class Worker {
     this.id = `worker-${uuidv4()}`;
     this.options.pollInterval = this.options.pollInterval || 5000; // 5 seconds
     this.options.maxExecutionTime = this.options.maxExecutionTime || 0; // 0 = no limit
+  }
+
+  async start(): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    await this.poll();
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+  }
+
+  private async poll(): Promise<void> {
+    while (this.running) {
+      try {
+        await this.processNextBatch();
+        await new Promise(resolve => setTimeout(resolve, this.options.pollInterval));
+      } catch (error) {
+        console.error('Error in worker poll:', error);
+        await new Promise(resolve => setTimeout(resolve, this.options.pollInterval));
+      }
+    }
   }
 
   async processNextBatch(maxJobs = 10, timeout = 0): Promise<number> {
@@ -672,7 +738,7 @@ const jobRegistry = JobRegistry.getInstance();
 jobRegistry.registerJobTypes(projectJobTypes);
 
 // Create queue instance
-export const queue = createQueueFromLib(new PrismaAdapter());
+const queue = createQueueFromLib(new PrismaAdapter());
 
 // Initialize the queue
 export async function initQueue() {

@@ -16,6 +16,16 @@ A powerful job queue system for Next.js applications, built with TypeScript and 
 - 🔄 Automatic schema migration and validation
 - 🛑 Robust graceful shutdown with timeout support
 
+## What's New in v1.3.5
+
+- 🔧 Fixed ESM compatibility issues with proper `.js` extensions in imports
+- 🐛 Improved database adapter shutdown process
+- 🔄 Enhanced foreign key constraint handling in PostgreSQL adapter
+- ✅ Fixed test suite to properly clean up resources
+- 📊 Added comprehensive job management API
+- 🔍 Improved queue administration capabilities
+- 📝 Enhanced TypeScript typings for better developer experience
+
 ## Installation
 
 ```bash
@@ -193,39 +203,107 @@ interface ShutdownOptions {
 ### Basic Usage
 
 ```typescript
-import { createQueue, PrismaAdapter } from 'turbomq';
+import { createQueue } from 'turbomq';
+import { PrismaAdapter } from 'turbomq/adapters/prisma-adapter';
 
-const queue = await createQueue(new PrismaAdapter());
+// Create a database adapter
+const adapter = new PrismaAdapter();
 
-// Add a job
-const job = await queue.addJob('send-email', {
-  to: 'user@example.com',
-  subject: 'Welcome!'
+// Create a queue
+const queue = createQueue(adapter);
+
+// Register a task handler
+queue.registerTask('sendEmail', async (payload) => {
+  // Send email logic here
+  return { success: true };
 });
 
-// Get job status
-const status = await queue.getJobStatus(job.id);
+// Add a job to the queue
+const job = await queue.addJob('sendEmail', {
+  to: 'user@example.com',
+  subject: 'Hello',
+  body: 'Hello from TurboMQ!'
+});
 
-// Get active jobs count
-const activeJobs = queue.getActiveJobsCount();
-console.log(`Currently running jobs: ${activeJobs}`);
+// Start processing jobs
+await queue.startProcessing();
+```
 
-// Get list of active job IDs
-const activeJobIds = queue.getActiveJobIds();
-console.log('Active job IDs:', activeJobIds);
+## Job Management API
 
-// Kill a specific job
-try {
-  await queue.killJob(job.id, 'Job taking too long');
-  console.log('Job killed successfully');
-} catch (error) {
-  console.error('Failed to kill job:', error.message);
-}
+TurboMQ provides a comprehensive API for managing jobs:
+
+```typescript
+// Query jobs by status
+const pendingJobs = await queue.listJobs({ status: 'pending' });
+
+// Remove jobs by status (with optional filters)
+await queue.removeJobsByStatus('failed', { 
+  beforeDate: new Date('2025-01-01'),
+  limit: 100
+});
+
+// Get detailed job information
+const jobInfo = await queue.getDetailedJobInfo({
+  status: 'completed',
+  taskName: 'sendEmail',
+  limit: 10,
+  offset: 0,
+  includeResults: true
+});
+
+// Update job progress
+await queue.updateJobProgress(jobId, 50); // 50% complete
+
+// Bulk update jobs
+await queue.updateJobsBatch([
+  { jobId: 'job1', status: 'completed' },
+  { jobId: 'job2', progress: 75 }
+]);
+```
+
+## Module System Compatibility
+
+TurboMQ v1.3.5 provides improved compatibility with both ESM and CommonJS module systems:
+
+```typescript
+// ESM import
+import { createQueue } from 'turbomq';
+import { PostgresAdapter } from 'turbomq/adapters/postgres-adapter';
+
+// CommonJS require
+const { createQueue } = require('turbomq');
+const { PostgresAdapter } = require('turbomq/adapters/postgres-adapter');
+```
+
+The package includes proper TypeScript typings for all exports, making it easy to use in TypeScript projects with full IntelliSense support.
+
+## Queue Administration
+
+TurboMQ includes tools for queue administration and maintenance:
+
+```typescript
+// Get queue statistics
+const stats = await queue.getQueueStats();
+console.log(`Pending: ${stats.pendingCount}, Running: ${stats.runningCount}`);
+
+// Clean up stale jobs
+const cleanedCount = await queue.cleanupStaleJobs();
+console.log(`Cleaned up ${cleanedCount} stale jobs`);
+
+// Graceful shutdown with options
+await queue.shutdown({ 
+  timeout: 30000,  // Wait up to 30 seconds for jobs to complete
+  force: false     // Don't force shutdown if jobs are still running
+});
 
 // Kill multiple jobs
 try {
-  await queue.killJobs(['job1', 'job2'], 'Batch cleanup');
-  console.log('Jobs killed successfully');
+  const result = await queue.killJobs(['job1', 'job2'], 'Batch kill');
+  console.log(`Successfully killed ${result.success.length} jobs`);
+  if (result.failed.length > 0) {
+    console.warn(`Failed to kill ${result.failed.length} jobs`);
+  }
 } catch (error) {
   console.error('Failed to kill jobs:', error.message);
 }

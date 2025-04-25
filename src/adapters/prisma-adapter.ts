@@ -55,7 +55,7 @@ export class PrismaAdapter implements DbAdapter {
     availableTasks: string[]
   ): Promise<Job | null> {
     // Start a transaction to ensure job claiming is atomic
-    return await this.prisma.$transaction(async (tx: PrismaClient) => {
+    return await this.prisma.$transaction(async (tx) => {
       // Find the next available job
       const job = await tx.job.findFirst({
         where: {
@@ -103,7 +103,7 @@ export class PrismaAdapter implements DbAdapter {
     const jobs: Job[] = [];
     
     // Use transaction to ensure atomic batch claiming
-    await this.prisma.$transaction(async (tx: PrismaClient) => {
+    await this.prisma.$transaction(async (tx) => {
       // Find batch of jobs
       const dbJobs = await tx.job.findMany({
         where: {
@@ -208,12 +208,11 @@ export class PrismaAdapter implements DbAdapter {
     });
   }
 
-  async updateJobsBatch(
-    updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>
-  ): Promise<void> {
-    await this.prisma.$transaction(
-      updates.map((update) => {
-        return this.prisma.job.update({
+  async updateJobsBatch(updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>): Promise<void> {
+    // Use a transaction to ensure all updates are atomic
+    await this.prisma.$transaction(async (tx) => {
+      for (const update of updates) {
+        await tx.job.update({
           where: { id: update.jobId },
           data: {
             ...(update.status && { status: update.status }),
@@ -224,8 +223,8 @@ export class PrismaAdapter implements DbAdapter {
             lastHeartbeat: new Date(),
           },
         });
-      })
-    );
+      }
+    });
   }
 
   async heartbeat(workerId: string, jobId?: string): Promise<void> {
@@ -351,6 +350,87 @@ export class PrismaAdapter implements DbAdapter {
     };
   }
 
+  async removeJobsByStatus(
+    status: JobStatus,
+    options?: { taskName?: string; beforeDate?: Date; limit?: number }
+  ): Promise<number> {
+    // Create the query parameters
+    const queryParams: any = {
+      where: {
+        status,
+        ...(options?.taskName && { taskName: options.taskName }),
+        ...(options?.beforeDate && { createdAt: { lt: options.beforeDate } }),
+      }
+    };
+    
+    // Add take parameter if limit is specified
+    if (options?.limit) {
+      queryParams.take = options.limit;
+    }
+    
+    const result = await this.prisma.job.deleteMany(queryParams);
+    return result.count;
+  }
+
+  async getDetailedJobInfo(options?: {
+    status?: JobStatus;
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    includeResults?: boolean;
+    includeErrors?: boolean;
+    includeProgress?: boolean;
+  }): Promise<{
+    jobs: Job[];
+    total: number;
+    stats: {
+      byStatus: Record<string, number>;
+      byTask: Record<string, number>;
+      averageProcessingTime?: number;
+      successRate?: number;
+    };
+  }> {
+    const [jobs, total] = await Promise.all([
+      this.prisma.job.findMany({
+        where: {
+          ...(options?.status && { status: options.status }),
+          ...(options?.taskName && { taskName: options.taskName }),
+        },
+        ...(options?.limit && { take: options.limit }),
+        ...(options?.offset && { skip: options.offset }),
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.job.count({
+        where: {
+          ...(options?.status && { status: options.status }),
+          ...(options?.taskName && { taskName: options.taskName }),
+        },
+      }),
+    ]);
+
+    const stats = await this.prisma.job.groupBy({
+      by: ['status', 'taskName'],
+      _count: true,
+    });
+
+    const byStatus: Record<string, number> = {};
+    const byTask: Record<string, number> = {};
+
+    stats.forEach((stat: { status: string; taskName: string; _count: number }) => {
+      byStatus[stat.status] = (byStatus[stat.status] || 0) + stat._count;
+      byTask[stat.taskName] = (byTask[stat.taskName] || 0) + stat._count;
+    });
+
+    return {
+      jobs: jobs.map(this.mapDbJobToJob),
+      total,
+      stats: {
+        byStatus,
+        byTask,
+      },
+    };
+  }
+
   // Helper method to convert database job to Job interface
   private mapDbJobToJob(dbJob: any): Job {
     return {
@@ -370,6 +450,7 @@ export class PrismaAdapter implements DbAdapter {
       progress: dbJob.progress !== null ? dbJob.progress : undefined,
       webhookUrl: dbJob.webhookUrl || undefined,
       webhookHeaders: dbJob.webhookHeaders ? JSON.parse(dbJob.webhookHeaders) : undefined,
+      retries: dbJob.attemptsMade || 0
     };
   }
 }

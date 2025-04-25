@@ -6,9 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider  = env("DATABASE_PROVIDER")
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "sqlite"
+  url      = "file:./test.db"
 }
 
 model Job {

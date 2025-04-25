@@ -1,4 +1,4 @@
-import { DbAdapter, Job, JobHandler, JobHelpers, JobOptions } from './types';
+import { DbAdapter, Job, JobHandler, JobHelpers, JobOptions, JobStatus } from './types';
 import { EventManager } from './events';
 import { WebhookService } from './services/webhook-service';
 import { v4 } from 'uuid';
@@ -185,7 +185,7 @@ export class Queue {
       };
 
       // Update worker ID and status in job
-      await this.db.updateJobsBatch([{ jobId: job.id, status: 'running' }]);
+      await this.db.updateJobsBatch([{ jobId: job.id, status: JobStatus.RUNNING }]);
       await this.db.heartbeat(workerId, job.id);
       
       // Add cleanup function to handler
@@ -273,6 +273,72 @@ export class Queue {
     failedCount: number;
   }> {
     return await this.db.getQueueStats();
+  }
+
+  /**
+   * Find jobs by their status
+   * @param status The status to filter by
+   * @param options Additional options for filtering and pagination
+   */
+  async findJobsByStatus<T>(
+    status: JobStatus,
+    options?: {
+      taskName?: string;
+      limit?: number;
+      offset?: number;
+      orderBy?: 'createdAt' | 'updatedAt' | 'runAt';
+      order?: 'asc' | 'desc';
+    }
+  ): Promise<Job<T>[]> {
+    return await this.db.listJobs<T>({
+      status,
+      taskName: options?.taskName,
+      limit: options?.limit,
+      offset: options?.offset,
+      orderBy: options?.orderBy,
+      order: options?.order
+    });
+  }
+
+  /**
+   * Remove jobs by their status
+   * @param status The status of jobs to remove
+   * @param options Additional options for filtering
+   */
+  async removeJobsByStatus(
+    status: JobStatus,
+    options?: {
+      taskName?: string;
+      beforeDate?: Date;
+      limit?: number;
+    }
+  ): Promise<number> {
+    return await this.db.removeJobsByStatus(status, options);
+  }
+
+  /**
+   * Get detailed information about jobs in different states
+   * @param options Options for filtering and pagination
+   */
+  async getDetailedJobInfo(options?: {
+    status?: JobStatus;
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    includeResults?: boolean;
+    includeErrors?: boolean;
+    includeProgress?: boolean;
+  }): Promise<{
+    jobs: Job<any>[];
+    total: number;
+    stats: {
+      byStatus: Record<string, number>;
+      byTask: Record<string, number>;
+      averageProcessingTime?: number;
+      successRate?: number;
+    };
+  }> {
+    return await this.db.getDetailedJobInfo(options);
   }
 
   // Get count of currently active jobs

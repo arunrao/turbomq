@@ -1,9 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { queue } from '../../lib/queue';
+import { createQueue, PrismaAdapter } from '../../lib/queue';
 
 // Rate limiting
 const RATE_LIMIT_WINDOW = 1000; // 1 second
-const MAX_REQUESTS = 10; // max requests per window
+const RATE_LIMIT_MAX = 10; // 10 requests per second
+
 const requestCounts = new Map<string, number[]>();
 
 function isRateLimited(ip: string): boolean {
@@ -17,7 +18,7 @@ function isRateLimited(ip: string): boolean {
   requests = requests.filter(time => time > windowStart);
   
   // Check if we're over the limit
-  if (requests.length >= MAX_REQUESTS) {
+  if (requests.length >= RATE_LIMIT_MAX) {
     return true;
   }
   
@@ -27,6 +28,9 @@ function isRateLimited(ip: string): boolean {
   
   return false;
 }
+
+// Create queue instance
+const queue = createQueue(new PrismaAdapter());
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -52,9 +56,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
+
+    // Check if this is a webhook request
+    const isWebhook = req.headers['x-webhook'] === 'true';
+
+    // Set cache headers based on request type
+    if (isWebhook) {
+      // For webhooks, prevent caching
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    } else {
+      // For polling, allow caching with a short TTL
+      res.setHeader('Cache-Control', 'public, max-age=5'); // 5 seconds cache
+    }
+
     return res.status(200).json(job);
   } catch (error) {
     console.error('Error fetching job status:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Failed to fetch job status' });
   }
 }

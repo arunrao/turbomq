@@ -17,16 +17,100 @@ export class TestAdapter implements DbAdapter {
     // No-op for testing
   }
 
+  // Implement the missing methods required by DbAdapter interface
+  async removeJobsByStatus(
+    status: JobStatus,
+    options?: { taskName?: string; beforeDate?: Date; limit?: number }
+  ): Promise<number> {
+    let count = 0;
+    const jobsToRemove: string[] = [];
+    
+    for (const [id, job] of this.jobs.entries()) {
+      if (job.status === status) {
+        // Apply filters if provided
+        if (options?.taskName && job.taskName !== options.taskName) continue;
+        if (options?.beforeDate && job.createdAt >= options.beforeDate) continue;
+        
+        jobsToRemove.push(id);
+        count++;
+        
+        // Apply limit if provided
+        if (options?.limit && count >= options.limit) break;
+      }
+    }
+    
+    // Remove the jobs
+    for (const id of jobsToRemove) {
+      this.jobs.delete(id);
+    }
+    
+    return count;
+  }
+
+  async getDetailedJobInfo(options?: {
+    status?: JobStatus;
+    taskName?: string;
+    limit?: number;
+    offset?: number;
+    includeResults?: boolean;
+    includeErrors?: boolean;
+    includeProgress?: boolean;
+  }): Promise<{
+    jobs: Job[];
+    total: number;
+    stats: {
+      byStatus: Record<string, number>;
+      byTask: Record<string, number>;
+      averageProcessingTime?: number;
+      successRate?: number;
+    };
+  }> {
+    let filteredJobs = Array.from(this.jobs.values());
+    
+    // Apply filters
+    if (options?.status) {
+      filteredJobs = filteredJobs.filter(job => job.status === options.status);
+    }
+    
+    if (options?.taskName) {
+      filteredJobs = filteredJobs.filter(job => job.taskName === options.taskName);
+    }
+    
+    // Sort by creation date (newest first)
+    filteredJobs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    
+    // Apply pagination
+    const offset = options?.offset || 0;
+    const limit = options?.limit || filteredJobs.length;
+    const paginatedJobs = filteredJobs.slice(offset, offset + limit);
+    
+    // Calculate statistics
+    const byStatus: Record<string, number> = {};
+    const byTask: Record<string, number> = {};
+    
+    for (const job of filteredJobs) {
+      byStatus[job.status] = (byStatus[job.status] || 0) + 1;
+      byTask[job.taskName] = (byTask[job.taskName] || 0) + 1;
+    }
+    
+    return {
+      jobs: paginatedJobs,
+      total: filteredJobs.length,
+      stats: { byStatus, byTask }
+    };
+  }
+
   async createJob(taskName: string, payload: any, options?: JobOptions): Promise<Job> {
     const job: TestJob = {
       id: `test-${Date.now()}`,
       taskName,
       payload,
-      status: 'pending',
+      status: JobStatus.PENDING,
       priority: options?.priority || 0,
       runAt: options?.runAt || new Date(),
       attemptsMade: 0,
       maxAttempts: options?.maxAttempts || 3,
+      retries: 0,
       createdAt: new Date(),
       updatedAt: new Date(),
       webhookUrl: options?.webhookUrl,
@@ -51,7 +135,7 @@ export class TestAdapter implements DbAdapter {
     const job = pendingJobs[0];
     if (!job) return null;
 
-    job.status = 'running';
+    job.status = JobStatus.RUNNING;
     job.workerId = workerId;
     job.attemptsMade = (job.attemptsMade || 0) + 1;
     job.updatedAt = now;
@@ -71,7 +155,7 @@ export class TestAdapter implements DbAdapter {
       .slice(0, batchSize);
 
     for (const job of jobs) {
-      job.status = 'running';
+      job.status = JobStatus.RUNNING;
       job.workerId = workerId;
       job.attemptsMade = (job.attemptsMade || 0) + 1;
       job.updatedAt = now;
@@ -83,7 +167,7 @@ export class TestAdapter implements DbAdapter {
   async completeJob(jobId: string, resultKey?: string): Promise<void> {
     const job = this.jobs.get(jobId);
     if (job) {
-      job.status = 'completed';
+      job.status = JobStatus.COMPLETED;
       job.resultKey = resultKey;
       job.completedAt = new Date();
       job.updatedAt = new Date();
@@ -93,7 +177,7 @@ export class TestAdapter implements DbAdapter {
   async failJob(jobId: string, error: Error): Promise<void> {
     const job = this.jobs.get(jobId);
     if (job) {
-      job.status = 'failed';
+      job.status = JobStatus.FAILED;
       job.lastError = error.message;
       job.completedAt = new Date();
       job.updatedAt = new Date();

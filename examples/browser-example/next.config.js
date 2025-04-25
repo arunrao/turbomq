@@ -7,7 +7,7 @@ const nextConfig = {
     // Number of pages to keep in memory
     pagesBufferLength: 4,
   },
-  webpack: (config, { _isServer }) => {
+  webpack: (config, { isServer }) => {
     // Add TypeScript loader for files outside of pages and components
     config.module.rules.push({
       test: /\.tsx?$/,
@@ -19,11 +19,11 @@ const nextConfig = {
           },
         },
       ],
-      include: [/src/],
+      include: [/src/, /lib/],
     });
 
     // Handle Node.js built-in modules
-    if (!_isServer) {
+    if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
@@ -39,6 +39,7 @@ const nextConfig = {
         util: false,
         buffer: false,
         assert: false,
+        child_process: false
       };
     }
 
@@ -46,6 +47,12 @@ const nextConfig = {
     config.resolve.extensionAlias = {
       '.js': ['.js', '.ts', '.tsx'],
       '.mjs': ['.mjs', '.mts', '.mtsx'],
+    };
+
+    // Add module resolution for turbomq
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'turbomq': '../../../src/index.js',
     };
 
     return config;

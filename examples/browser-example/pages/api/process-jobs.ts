@@ -34,9 +34,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const job = await queue.getJobById(jobId as string);
       
       if (job && job.status === 'pending') {
-        // Create worker
-        const worker = createWorker(queue, dbAdapter);
-        
         // Generate a worker ID
         const workerId = `worker-${Date.now()}`;
         

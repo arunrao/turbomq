@@ -4,24 +4,47 @@ import FileUpload from '../components/FileUpload';
 import JobStatus from '../components/JobStatus';
 
 export default function Home() {
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [jobId, setJobId] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<number | undefined>(undefined);
-  const [showProgressBar, setShowProgressBar] = useState<boolean>(false);
-  const [jobCompleted, setJobCompleted] = useState<boolean>(false);
+  const [showProgressBar, setShowProgressBar] = useState(false);
+  const [jobStatus, setJobStatus] = useState<string>('');
+  const [jobProgress, setJobProgress] = useState<number>(0);
+  const [jobError, setJobError] = useState<string>('');
+  const [jobResult, setJobResult] = useState<any>(null);
+  const [isConnected, setConnected] = useState(false);
   
   // Initialize Socket.IO connection when the page loads
   useEffect(() => {
+    console.log('Initializing Socket.IO connection...');
+    
     // Call the Socket.IO initialization endpoint
     fetch('/api/socketio')
-      .then(response => response.json())
-      .then(data => console.log('Socket.IO initialization:', data))
-      .catch(error => console.error('Socket.IO initialization error:', error));
+      .then(response => {
+        console.log('Socket.IO initialization response status:', response.status);
+        if (!response.ok) {
+          throw new Error(`Failed to initialize Socket.IO: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log('Socket.IO initialization successful:', data);
+        if (data.connected) {
+          setConnected(true);
+        } else {
+          throw new Error('Socket.IO initialization failed: Server not connected');
+        }
+      })
+      .catch(error => {
+        console.error('Socket.IO initialization error:', error);
+        setConnected(false);
+      });
   }, []);
   
   // Handle job creation
-  const handleJobCreated = (id: string, showProgress: boolean = false) => {
+  const handleJobCreated = (id: string, showProgress = false) => {
     setJobId(id);
-    setJobCompleted(false); // Reset job completed state
+    setIsProcessing(false);
     if (!showProgress) {
       // Reset upload progress if we're not showing it
       setUploadProgress(undefined);
@@ -37,8 +60,12 @@ export default function Home() {
   
   // Handle job status updates
   const handleJobUpdate = (data: any) => {
+    setJobStatus(data.status);
+    setJobProgress(data.progress || 0);
+    setJobError(data.error || '');
+    setJobResult(data.result || null);
     if (data.status === 'completed' || data.status === 'failed') {
-      setJobCompleted(true);
+      setIsProcessing(false);
     }
   };
   
@@ -58,10 +85,37 @@ export default function Home() {
           <p>Upload a file to process it using the next-queue system.</p>
           <p>Choose between client polling or webhooks for status updates.</p>
           
+          {!isConnected && (
+            <div className="connection-warning">
+              Not connected to server
+            </div>
+          )}
+          
           <FileUpload 
             onJobCreated={handleJobCreated} 
             onUploadProgress={handleUploadProgress} 
           />
+          
+          {isProcessing && (
+            <div className="processing-indicator">
+              Processing job... {jobStatus && `(${jobStatus})`}
+              {jobProgress > 0 && (
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${jobProgress}%` }} />
+                </div>
+              )}
+              {jobError && (
+                <div className="error-message">
+                  Error: {jobError}
+                </div>
+              )}
+              {jobResult && (
+                <div className="result-message">
+                  Result: {JSON.stringify(jobResult)}
+                </div>
+              )}
+            </div>
+          )}
           
           {(jobId || showProgressBar) && (
             <div className="status-section">
@@ -69,8 +123,7 @@ export default function Home() {
               {jobId ? (
                 <JobStatus 
                   jobId={jobId} 
-                  uploadProgress={uploadProgress} 
-                  onJobUpdate={handleJobUpdate}
+                  onComplete={handleJobUpdate}
                 />
               ) : showProgressBar && (
                 <div className="progress-container">
@@ -184,12 +237,31 @@ export default function Home() {
           transition: width 0.3s ease;
         }
 
+        .processing-indicator {
+          margin: 1rem 0;
+          padding: 0.5rem;
+          background: #f3f4f6;
+          border-radius: 4px;
+          text-align: center;
+          color: #4b5563;
+        }
+
         ul {
           padding-left: 1.5rem;
         }
 
         li {
           margin-bottom: 0.5rem;
+        }
+
+        .connection-warning {
+          margin-bottom: 1rem;
+          padding: 0.5rem;
+          background: #fef2f2;
+          border: 1px solid #fde2e2;
+          border-radius: 4px;
+          text-align: center;
+          color: #b91c1c;
         }
       `}</style>
 
