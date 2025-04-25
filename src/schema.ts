@@ -1,4 +1,7 @@
-import { Pool } from 'pg';
+export interface DatabaseClient {
+  query(sql: string, params?: any[]): Promise<any>;
+  release?(): void;
+}
 
 export interface SchemaIssue {
   type: 'missing_table' | 'missing_column' | 'invalid_type';
@@ -11,6 +14,11 @@ export interface SchemaIssue {
 export interface SchemaVersion {
   version: string;
   sql: string;
+}
+
+export interface ColumnInfo {
+  column_name: string;
+  data_type: string;
 }
 
 export const REQUIRED_SCHEMA = {
@@ -60,27 +68,18 @@ export const SCHEMA_VERSIONS: SchemaVersion[] = [
   }
 ];
 
-export async function createSchema(pool: Pool): Promise<void> {
-  const client = await pool.connect();
+export async function createSchema(client: DatabaseClient): Promise<void> {
   try {
-    await client.query('BEGIN');
-    
-    for (const [_tableName, sql] of Object.entries(REQUIRED_SCHEMA)) {
+    for (const [, sql] of Object.entries(REQUIRED_SCHEMA)) {
       await client.query(sql);
     }
-    
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
   } finally {
-    client.release();
+    client.release?.();
   }
 }
 
-export async function inspectSchema(pool: Pool): Promise<SchemaIssue[]> {
+export async function inspectSchema(client: DatabaseClient): Promise<SchemaIssue[]> {
   const issues: SchemaIssue[] = [];
-  const client = await pool.connect();
   
   try {
     // Check if tables exist
@@ -112,7 +111,7 @@ export async function inspectSchema(pool: Pool): Promise<SchemaIssue[]> {
       
       const requiredColumns = getRequiredColumns(tableName);
       for (const [columnName, expectedType] of Object.entries(requiredColumns)) {
-        const column = columns.rows.find(c => c.column_name === columnName);
+        const column = columns.rows.find((c: ColumnInfo) => c.column_name === columnName);
         if (!column) {
           issues.push({
             type: 'missing_column',
@@ -132,14 +131,14 @@ export async function inspectSchema(pool: Pool): Promise<SchemaIssue[]> {
       }
     }
   } finally {
-    client.release();
+    client.release?.();
   }
   
   return issues;
 }
 
 export async function migrateSchema(
-  pool: Pool,
+  client: DatabaseClient,
   fromVersion: string,
   toVersion: string
 ): Promise<void> {
@@ -150,20 +149,12 @@ export async function migrateSchema(
     throw new Error(`Invalid version specified. Available versions: ${SCHEMA_VERSIONS.map(v => v.version).join(', ')}`);
   }
   
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    
     for (let i = fromIndex + 1; i <= toIndex; i++) {
       await client.query(SCHEMA_VERSIONS[i].sql);
     }
-    
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
   } finally {
-    client.release();
+    client.release?.();
   }
 }
 

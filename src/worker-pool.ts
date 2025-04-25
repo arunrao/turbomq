@@ -4,20 +4,15 @@ import { Worker } from './worker';
 
 export class WorkerPool {
   private workers: Worker[] = [];
-  private maxWorkers: number;
-  private minWorkers: number;
-  private currentWorkers: number = 0;
-  private checkInterval?: NodeJS.Timeout;
+  private adjustInterval: NodeJS.Timeout | null = null;
+  private currentWorkers = 0;
   
   constructor(
-    private queueInstance: Queue,
-    private dbAdapter: DbAdapter,
-    minWorkers = 0,
-    maxWorkers = 5
-  ) {
-    this.minWorkers = minWorkers;
-    this.maxWorkers = maxWorkers;
-  }
+    private queue: Queue,
+    private db: DbAdapter,
+    private minWorkers = 1,
+    private maxWorkers = 5
+  ) {}
   
   async start(): Promise<void> {
     // Start minimum workers
@@ -26,12 +21,12 @@ export class WorkerPool {
     }
     
     // Start monitoring queue depth
-    this.checkInterval = setInterval(() => this.adjustWorkerCount(), 10000);
+    this.adjustInterval = setInterval(() => this.adjustWorkerCount(), 10000);
   }
   
   private async adjustWorkerCount(): Promise<void> {
     try {
-      const queueStats = await this.dbAdapter.getQueueStats();
+      const queueStats = await this.db.getQueueStats();
       const pendingJobs = queueStats.pendingCount;
       
       if (pendingJobs > this.currentWorkers * 3 && this.currentWorkers < this.maxWorkers) {
@@ -47,7 +42,7 @@ export class WorkerPool {
   }
   
   private startWorker(): void {
-    const worker = new Worker(this.queueInstance, this.dbAdapter);
+    const worker = new Worker(this.queue, this.db);
     worker.start().catch(console.error);
     this.workers.push(worker);
     this.currentWorkers++;
@@ -64,8 +59,8 @@ export class WorkerPool {
   }
   
   async shutdown(): Promise<void> {
-    if (this.checkInterval) {
-      clearInterval(this.checkInterval);
+    if (this.adjustInterval) {
+      clearInterval(this.adjustInterval);
     }
     
     // Stop all workers gracefully

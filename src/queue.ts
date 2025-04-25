@@ -1,7 +1,7 @@
 import { DbAdapter, Job, JobHandler, JobHelpers, JobOptions } from './types';
 import { EventManager } from './events';
 import { WebhookService } from './services/webhook-service';
-import { v4 } from 'uuid/dist/v4.js';
+import { v4 } from 'uuid';
 
 export interface ShutdownOptions {
   timeout?: number;

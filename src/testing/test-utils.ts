@@ -1,10 +1,8 @@
-import { createQueue, Queue } from '../index';
+import { Queue } from '../queue';
 import { TestAdapter } from './test-adapter';
 
-export async function createTestQueue(): Promise<Queue> {
-  const adapter = new TestAdapter();
-  const queue = await createQueue(adapter);
-  return queue;
+export function createTestQueue(): Queue {
+  return new Queue(new TestAdapter());
 }
 
 export function createTestJob(taskName: string, payload: any = {}) {
@@ -37,4 +35,4 @@ export function createTestWorkerHeartbeat(workerId: string, jobId?: string) {
     currentJob: jobId,
     lastSeen: new Date()
   };
-} 
+}

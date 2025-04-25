@@ -12,8 +12,8 @@ export class Worker {
   constructor(
     private queue: Queue,
     private db: DbAdapter,
-    private pollInterval: number = 5000,
-    private maxExecutionTime: number = 0 // 0 means no limit (for continuous mode)
+    private pollInterval = 5000,
+    private maxExecutionTime = 0 // 0 means no limit (for continuous mode)
   ) {
     this.workerId = `worker-${Date.now()}-${uuidv4().substring(0, 8)}`;
   }
@@ -82,7 +82,7 @@ export class Worker {
     }
   }
 
-  async gracefulShutdown(timeout: number = 30000): Promise<boolean> {
+  async gracefulShutdown(timeout = 30000): Promise<boolean> {
     if (!this.currentJobId) {
       // No active job, can shut down immediately
       this.running = false;
@@ -113,7 +113,7 @@ export class Worker {
   }
 
   // Process a batch of jobs (good for serverless environments)
-  async processNextBatch(maxJobs: number = 5, timeout: number = 25000): Promise<number> {
+  async processNextBatch(maxJobs = 5, timeout = 25000): Promise<number> {
     let processedCount = 0;
     const startTime = Date.now();
     

@@ -57,8 +57,8 @@ export class WebhookService {
   static async sendWithRetry(
     job: Job, 
     result?: any, 
-    maxRetries: number = 3, 
-    initialDelay: number = 1000
+    maxRetries = 3, 
+    initialDelay = 1000
   ): Promise<boolean> {
     let retries = 0;
     let delay = initialDelay;
