@@ -91,6 +91,26 @@ Lists jobs with optional filtering.
 
 Gets statistics about the queue.
 
+##### `async killJob(jobId: string, reason?: string, timeout?: number): Promise<void>`
+
+Kills a running job with an optional reason and timeout.
+
+- `jobId`: The ID of the job to kill
+- `reason`: Optional reason for killing the job (default: 'Job killed by user')
+- `timeout`: Optional timeout in milliseconds (default: 5000)
+
+##### `async killJobs(jobIds: string[], reason?: string, timeout?: number): Promise<void>`
+
+Kills multiple running jobs with an optional reason and timeout.
+
+- `jobIds`: Array of job IDs to kill
+- `reason`: Optional reason for killing the jobs (default: 'Jobs killed by user')
+- `timeout`: Optional timeout in milliseconds (default: 5000)
+
+##### `getAvailableMethods(): string[]`
+
+Returns an array of all available public methods on the Queue instance.
+
 #### Event Handlers
 
 ##### `onJobCreated(listener: (job: Job) => void): void`

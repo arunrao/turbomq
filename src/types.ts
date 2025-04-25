@@ -32,6 +32,7 @@ export interface JobHelpers<T = any> {
   updateProgress: (progress: number) => Promise<void>;
   getJobDetails: () => Promise<Job<T>>;
   storeResult: (result: any) => Promise<string>;
+  cleanup?: () => Promise<void>;
 }
 
 export type JobHandler<T = any> = (payload: T, helpers: JobHelpers<T>) => Promise<any>;

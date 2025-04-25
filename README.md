@@ -13,6 +13,8 @@ A powerful job queue system for Next.js applications, built with TypeScript and 
 - 📈 Progress tracking and webhook notifications
 - 🛡️ TypeScript support with full type definitions
 - 🔍 Job monitoring and debugging tools
+- 🔄 Automatic schema migration and validation
+- 🛑 Robust graceful shutdown with timeout support
 
 ## Installation
 
@@ -91,6 +93,47 @@ const status = await queue.getJobStatus(job.id);
 - Better performance for high-throughput applications
 - Not suitable for browser-based applications
 
+## Schema Management
+
+TurboMQ provides automatic schema management:
+
+```typescript
+// Run schema migration
+npm run migrate
+```
+
+The migration script will:
+1. Inspect the current schema
+2. Identify missing tables and columns
+3. Apply necessary migrations
+4. Validate the schema
+
+### Schema Validation
+
+The system validates the schema on startup and reports any issues:
+- Missing tables
+- Missing columns
+- Invalid column types
+
+## Graceful Shutdown
+
+TurboMQ provides robust shutdown support:
+
+```typescript
+// Graceful shutdown with timeout
+await queue.shutdown({
+  timeout: 5000,  // 5 seconds
+  force: false    // Don't force shutdown if jobs are still running
+});
+```
+
+Features:
+- Waits for active jobs to complete
+- Configurable timeout
+- Force option for emergency shutdown
+- Proper database disconnection
+- Detailed logging
+
 ## Browser Example
 
 Check out the [browser example](examples/browser-example) for a complete implementation using:
@@ -117,6 +160,11 @@ interface Queue {
   getJobResult(jobId: string): Promise<any>;
   listJobs(filter?: JobFilter): Promise<Job[]>;
   getQueueStats(): Promise<QueueStats>;
+  shutdown(options?: ShutdownOptions): Promise<void>;
+  getActiveJobsCount(): number;
+  getActiveJobIds(): string[];
+  killJob(jobId: string, reason?: string): Promise<void>;
+  killJobs(jobIds: string[], reason?: string): Promise<void>;
 }
 ```
 
@@ -128,6 +176,15 @@ interface JobOptions {
   maxAttempts?: number;
   webhookUrl?: string;
   webhookHeaders?: Record<string, string>;
+}
+```
+
+### Shutdown Options
+
+```typescript
+interface ShutdownOptions {
+  timeout?: number;  // Default: 5000ms
+  force?: boolean;   // Default: false
 }
 ```
 
@@ -148,6 +205,30 @@ const job = await queue.addJob('send-email', {
 
 // Get job status
 const status = await queue.getJobStatus(job.id);
+
+// Get active jobs count
+const activeJobs = queue.getActiveJobsCount();
+console.log(`Currently running jobs: ${activeJobs}`);
+
+// Get list of active job IDs
+const activeJobIds = queue.getActiveJobIds();
+console.log('Active job IDs:', activeJobIds);
+
+// Kill a specific job
+try {
+  await queue.killJob(job.id, 'Job taking too long');
+  console.log('Job killed successfully');
+} catch (error) {
+  console.error('Failed to kill job:', error.message);
+}
+
+// Kill multiple jobs
+try {
+  await queue.killJobs(['job1', 'job2'], 'Batch cleanup');
+  console.log('Jobs killed successfully');
+} catch (error) {
+  console.error('Failed to kill jobs:', error.message);
+}
 ```
 
 ### With Webhooks
