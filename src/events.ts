@@ -30,37 +30,40 @@ export class EventEmitter {
 }
 
 export class EventManager {
-  private emitter = new EventEmitter();
+  private jobCreatedListeners: Array<(job: Job<any>) => void> = [];
+  private jobCompletedListeners: Array<(job: Job<any>) => void> = [];
+  private jobFailedListeners: Array<(job: Job<any>, error: Error) => void> = [];
+  private jobProgressListeners: Array<(job: Job<any>, progress: number) => void> = [];
 
-  onJobCreated(listener: (job: Job) => void): void {
-    this.emitter.on('job:created', listener);
+  onJobCreated<T>(listener: (job: Job<T>) => void): void {
+    this.jobCreatedListeners.push(listener);
   }
 
-  onJobCompleted(listener: (job: Job) => void): void {
-    this.emitter.on('job:completed', listener);
-  }
-  
-  onJobFailed(listener: (job: Job, error: Error) => void): void {
-    this.emitter.on('job:failed', listener);
+  onJobCompleted<T>(listener: (job: Job<T>) => void): void {
+    this.jobCompletedListeners.push(listener);
   }
 
-  onJobProgress(listener: (job: Job, progress: number) => void): void {
-    this.emitter.on('job:progress', listener);
+  onJobFailed<T>(listener: (job: Job<T>, error: Error) => void): void {
+    this.jobFailedListeners.push(listener);
   }
 
-  emitJobCreated(job: Job): void {
-    this.emitter.emit('job:created', job);
+  onJobProgress<T>(listener: (job: Job<T>, progress: number) => void): void {
+    this.jobProgressListeners.push(listener);
   }
 
-  emitJobCompleted(job: Job): void {
-    this.emitter.emit('job:completed', job);
+  emitJobCreated<T>(job: Job<T>): void {
+    this.jobCreatedListeners.forEach(listener => listener(job));
   }
 
-  emitJobFailed(job: Job, error: Error): void {
-    this.emitter.emit('job:failed', job, error);
+  emitJobCompleted<T>(job: Job<T>): void {
+    this.jobCompletedListeners.forEach(listener => listener(job));
   }
 
-  emitJobProgress(job: Job, progress: number): void {
-    this.emitter.emit('job:progress', job, progress);
+  emitJobFailed<T>(job: Job<T>, error: Error): void {
+    this.jobFailedListeners.forEach(listener => listener(job, error));
+  }
+
+  emitJobProgress<T>(job: Job<T>, progress: number): void {
+    this.jobProgressListeners.forEach(listener => listener(job, progress));
   }
 }

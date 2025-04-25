@@ -1,6 +1,12 @@
 import { Pool, PoolConfig } from 'pg';
 import { DbAdapter, Job, JobOptions, JobStatus } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { createSchema, inspectSchema, migrateSchema, SchemaIssue } from '../schema';
+
+export interface PostgresAdapterConfig extends PoolConfig {
+  createSchema?: boolean;
+  schemaVersion?: string;
+}
 
 /**
  * PostgreSQL adapter for the Next.js job queue system.
@@ -9,12 +15,14 @@ import { v4 as uuidv4 } from 'uuid';
 export class PostgresAdapter implements DbAdapter {
   private pool: Pool;
   private connected = false;
+  private config: PostgresAdapterConfig;
 
   /**
    * Create a new PostgreSQL adapter.
    * @param config Optional configuration options
    */
-  constructor(config?: PoolConfig) {
+  constructor(config?: PostgresAdapterConfig) {
+    this.config = config || {};
     this.pool = new Pool(config);
   }
 
@@ -22,7 +30,14 @@ export class PostgresAdapter implements DbAdapter {
     if (!this.connected) {
       await this.pool.connect();
       this.connected = true;
-      await this.initializeTables();
+      
+      if (this.config.createSchema) {
+        await createSchema(this.pool);
+      }
+      
+      if (this.config.schemaVersion) {
+        await migrateSchema(this.pool, '1.0.0', this.config.schemaVersion);
+      }
     }
   }
 
@@ -31,6 +46,10 @@ export class PostgresAdapter implements DbAdapter {
       await this.pool.end();
       this.connected = false;
     }
+  }
+
+  async inspectSchema(): Promise<SchemaIssue[]> {
+    return inspectSchema(this.pool);
   }
 
   private async initializeTables(): Promise<void> {

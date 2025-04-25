@@ -17,6 +17,7 @@ import {
   FileStorage,
   JobHelpers
 } from './types';
+import { inspectSchema, migrateSchema, exportSchema, SchemaIssue } from './schema';
 
 // Main function to create queue instance
 function createQueue(adapter?: DbAdapter): Queue {
@@ -29,6 +30,8 @@ function createPostgresAdapter(options?: {
   connectionString?: string;
   ssl?: boolean;
   staleJobThresholdMs?: number;
+  createSchema?: boolean;
+  schemaVersion?: string;
 }): PostgresAdapter {
   return new PostgresAdapter(options);
 }
@@ -75,6 +78,10 @@ export {
   getConfig,
   isServerlessEnvironment,
   QueueClient,
+  // Schema management
+  inspectSchema,
+  migrateSchema,
+  exportSchema,
   // Testing utilities
   TestAdapter,
   createTestQueue,
@@ -90,5 +97,6 @@ export type {
   JobHandler,
   JobHelpers,
   DbAdapter,
-  FileStorage
+  FileStorage,
+  SchemaIssue
 };

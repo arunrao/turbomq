@@ -3,9 +3,15 @@ import { EventManager } from './events';
 import { WebhookService } from './services/webhook-service';
 import { v4 as uuidv4 } from 'uuid';
 
+export interface ShutdownOptions {
+  timeout?: number;
+  force?: boolean;
+}
+
 export class Queue {
-  private handlers: Map<string, JobHandler> = new Map();
+  private handlers: Map<string, JobHandler<any>> = new Map();
   private events: EventManager;
+  private isShuttingDown = false;
   
   constructor(private db: DbAdapter) {
     this.events = new EventManager();
@@ -15,40 +21,85 @@ export class Queue {
     await this.db.connect();
   }
 
-  async shutdown(): Promise<void> {
-    await this.db.disconnect();
+  async shutdown(options: ShutdownOptions = {}): Promise<void> {
+    if (this.isShuttingDown) {
+      return;
+    }
+
+    this.isShuttingDown = true;
+    const { timeout = 5000, force = false } = options;
+
+    try {
+      // Wait for any in-progress jobs to complete
+      if (!force) {
+        const runningJobs = await this.db.listJobs({ status: 'running' });
+        if (runningJobs.length > 0) {
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Shutdown timeout')), timeout);
+          });
+
+          const waitPromise = Promise.all(
+            runningJobs.map(job => 
+              new Promise<void>((resolve) => {
+                const checkInterval = setInterval(async () => {
+                  const updatedJob = await this.db.getJobById(job.id);
+                  if (!updatedJob || updatedJob.status !== 'running') {
+                    clearInterval(checkInterval);
+                    resolve();
+                  }
+                }, 100);
+              })
+            )
+          );
+
+          await Promise.race([waitPromise, timeoutPromise]);
+        }
+      }
+
+      // Disconnect from database
+      await this.db.disconnect();
+    } catch (error) {
+      if (force) {
+        console.warn('Forced shutdown despite errors:', error);
+        await this.db.disconnect();
+      } else {
+        throw error;
+      }
+    } finally {
+      this.isShuttingDown = false;
+    }
   }
 
-  registerTask(taskName: string, handler: JobHandler): void {
+  registerTask<T>(taskName: string, handler: JobHandler<T>): void {
     this.handlers.set(taskName, handler);
   }
 
-  async addJob(
+  async addJob<T>(
     taskName: string, 
-    payload: any, 
+    payload: T, 
     options?: JobOptions
-  ): Promise<Job> {
+  ): Promise<Job<T>> {
     if (!this.handlers.has(taskName)) {
       throw new Error(`No handler registered for task: ${taskName}`);
     }
 
-    const job = await this.db.createJob(taskName, payload, options);
+    const job = await this.db.createJob<T>(taskName, payload, options);
     this.events.emitJobCreated(job);
     return job;
   }
 
-  async processJob(workerId: string, job: Job): Promise<void> {
-    const handler = this.handlers.get(job.taskName);
+  async processJob<T>(workerId: string, job: Job<T>): Promise<void> {
+    const handler = this.handlers.get(job.taskName) as JobHandler<T>;
     if (!handler) {
       throw new Error(`No handler found for task: ${job.taskName}`);
     }
 
-    const helpers: JobHelpers = {
+    const helpers: JobHelpers<T> = {
       updateProgress: async (progress: number) => {
         await this.db.updateJobProgress(job.id, progress);
         
         // Fetch updated job for event
-        const updatedJob = await this.db.getJobById(job.id);
+        const updatedJob = await this.db.getJobById<T>(job.id);
         if (updatedJob) {
           this.events.emitJobProgress(updatedJob, progress);
           
@@ -61,7 +112,7 @@ export class Queue {
         }
       },
       getJobDetails: async () => {
-        const updatedJob = await this.db.getJobById(job.id);
+        const updatedJob = await this.db.getJobById<T>(job.id);
         if (!updatedJob) throw new Error(`Job not found: ${job.id}`);
         return updatedJob;
       },
@@ -81,7 +132,7 @@ export class Queue {
       await this.db.completeJob(job.id, resultKey);
       
       // Fetch updated job
-      const updatedJob = await this.db.getJobById(job.id);
+      const updatedJob = await this.db.getJobById<T>(job.id);
       if (updatedJob) {
         this.events.emitJobCompleted(updatedJob);
         
@@ -96,7 +147,7 @@ export class Queue {
       await this.db.failJob(job.id, error as Error);
       
       // Fetch updated job
-      const updatedJob = await this.db.getJobById(job.id);
+      const updatedJob = await this.db.getJobById<T>(job.id);
       if (updatedJob) {
         this.events.emitJobFailed(updatedJob, error as Error);
         
@@ -113,32 +164,32 @@ export class Queue {
     }
   }
 
-  onJobCreated(listener: (job: Job) => void): void {
+  onJobCreated<T>(listener: (job: Job<T>) => void): void {
     this.events.onJobCreated(listener);
   }
 
-  onJobCompleted(listener: (job: Job) => void): void {
+  onJobCompleted<T>(listener: (job: Job<T>) => void): void {
     this.events.onJobCompleted(listener);
   }
 
-  onJobFailed(listener: (job: Job, error: Error) => void): void {
+  onJobFailed<T>(listener: (job: Job<T>, error: Error) => void): void {
     this.events.onJobFailed(listener);
   }
 
-  onJobProgress(listener: (job: Job, progress: number) => void): void {
+  onJobProgress<T>(listener: (job: Job<T>, progress: number) => void): void {
     this.events.onJobProgress(listener);
   }
 
-  async getJobById(jobId: string): Promise<Job | null> {
-    return await this.db.getJobById(jobId);
+  async getJobById<T>(jobId: string): Promise<Job<T> | null> {
+    return await this.db.getJobById<T>(jobId);
   }
 
   async getJobResult(resultKey: string): Promise<any> {
     return await this.db.getResult(resultKey);
   }
 
-  async listJobs(filter?: { status?: string; taskName?: string }): Promise<Job[]> {
-    return await this.db.listJobs(filter as any);
+  async listJobs<T>(filter?: { status?: string; taskName?: string }): Promise<Job<T>[]> {
+    return await this.db.listJobs<T>(filter as any);
   }
 
   async getQueueStats(): Promise<{
@@ -151,7 +202,7 @@ export class Queue {
   }
 
   // Expose handlers map for worker to access available tasks
-  getHandlers(): Map<string, JobHandler> {
+  getHandlers(): Map<string, JobHandler<any>> {
     return this.handlers;
   }
 }

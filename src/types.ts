@@ -1,15 +1,15 @@
 // Types
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
-export interface Job {
+export interface Job<T = any> {
   id: string;
   taskName: string;
-  payload: any;
+  payload: T;
   status: JobStatus;
-  priority: number;
-  runAt: Date;
-  attemptsMade: number;
-  maxAttempts: number;
+  priority?: number;
+  runAt?: Date;
+  attemptsMade?: number;
+  maxAttempts?: number;
   lastError?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -28,36 +28,32 @@ export interface JobOptions {
   webhookHeaders?: Record<string, string>;
 }
 
-export interface JobHelpers {
+export interface JobHelpers<T = any> {
   updateProgress: (progress: number) => Promise<void>;
-  getJobDetails: () => Promise<Job>;
+  getJobDetails: () => Promise<Job<T>>;
   storeResult: (result: any) => Promise<string>;
 }
 
-export type JobHandler = (payload: any, helpers: JobHelpers) => Promise<any>;
+export type JobHandler<T = any> = (payload: T, helpers: JobHelpers<T>) => Promise<any>;
 
 export interface DbAdapter {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  createJob: (taskName: string, payload: any, options?: JobOptions) => Promise<Job>;
-  fetchNextJob: (workerId: string, availableTasks: string[]) => Promise<Job | null>;
-  fetchNextBatch: (workerId: string, availableTasks: string[], batchSize?: number) => Promise<Job[]>;
-  completeJob: (jobId: string, resultKey?: string) => Promise<void>;
-  failJob: (jobId: string, error: Error) => Promise<void>;
-  updateJobProgress: (jobId: string, progress: number) => Promise<void>;
-  updateJobsBatch: (updates: Array<{jobId: string, status?: JobStatus, progress?: number}>) => Promise<void>;
-  heartbeat: (workerId: string, jobId?: string) => Promise<void>;
-  getJobById: (jobId: string) => Promise<Job | null>;
-  listJobs: (filter?: { status?: JobStatus; taskName?: string }) => Promise<Job[]>;
-  cleanupStaleJobs: () => Promise<number>;
-  storeResult: (jobId: string, result: any) => Promise<string>;
-  getResult: (resultKey: string) => Promise<any>;
-  getQueueStats: () => Promise<{
-    pendingCount: number;
-    runningCount: number;
-    completedCount: number;
-    failedCount: number;
-  }>;
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  createJob<T = any>(taskName: string, payload: T, options?: JobOptions): Promise<Job<T>>;
+  fetchNextJob(workerId: string, availableTasks: string[]): Promise<Job | null>;
+  fetchNextBatch(workerId: string, availableTasks: string[], batchSize?: number): Promise<Job[]>;
+  completeJob(jobId: string, resultKey?: string): Promise<void>;
+  failJob(jobId: string, error: Error): Promise<void>;
+  getJobById<T = any>(jobId: string): Promise<Job<T> | null>;
+  updateJobStatus(jobId: string, status: JobStatus, error?: string): Promise<void>;
+  updateJobProgress(jobId: string, progress: number): Promise<void>;
+  storeResult(jobId: string, result: any): Promise<string>;
+  getResult(resultKey: string): Promise<any>;
+  updateJobsBatch(updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>): Promise<void>;
+  heartbeat(workerId: string, jobId?: string): Promise<void>;
+  listJobs<T = any>(filter?: { status?: JobStatus; taskName?: string }): Promise<Job<T>[]>;
+  cleanupStaleJobs(): Promise<number>;
+  getQueueStats(): Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number }>;
 }
 
 // Environment Configuration
@@ -78,11 +74,9 @@ export interface EnvironmentConfig {
 
 // File Storage Interface
 export interface FileStorage {
-  getFile(identifier: string): Promise<Buffer>;
-  getFileStream(identifier: string): Promise<NodeJS.ReadableStream>;
-  storeFile(content: Buffer, metadata: Record<string, any>): Promise<string>;
-  storeFileStream(stream: NodeJS.ReadableStream, metadata: Record<string, any>): Promise<string>;
-  deleteFile(identifier: string): Promise<void>;
+  store(key: string, data: any): Promise<void>;
+  retrieve(key: string): Promise<any>;
+  delete(key: string): Promise<void>;
 }
 
 export interface StorageAdapter {

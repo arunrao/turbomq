@@ -196,6 +196,18 @@ export class PrismaAdapter implements DbAdapter {
     });
   }
 
+  async updateJobStatus(jobId: string, status: JobStatus, error?: string): Promise<void> {
+    await this.prisma.job.update({
+      where: { id: jobId },
+      data: {
+        status,
+        lastError: error,
+        updatedAt: new Date(),
+        completedAt: status === 'completed' || status === 'failed' ? new Date() : undefined,
+      },
+    });
+  }
+
   async updateJobsBatch(
     updates: Array<{ jobId: string; status?: JobStatus; progress?: number }>
   ): Promise<void> {

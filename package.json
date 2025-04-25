@@ -1,6 +1,6 @@
 {
   "name": "turbomq",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "A powerful job queue system for Next.js applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,12 @@
     "queue",
     "job-queue",
     "background-jobs",
-    "prisma"
+    "prisma",
+    "typescript",
+    "serverless",
+    "aws-lambda",
+    "vercel",
+    "scaling"
   ],
   "author": "Arun Rao",
   "license": "MIT",
@@ -52,7 +57,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs"
   ],
   "repository": {
     "type": "git",
