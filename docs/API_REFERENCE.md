@@ -2,6 +2,23 @@
 
 This document provides a comprehensive reference for all the components, classes, and methods available in the Next.js Queue System.
 
+## Version 1.2.2
+
+### Module System Support
+The package now supports both ES Modules (ESM) and CommonJS module systems:
+
+- **ES Modules (ESM)**
+  ```typescript
+  import { Queue } from 'turbomq';
+  ```
+
+- **CommonJS**
+  ```typescript
+  const { Queue } = require('turbomq');
+  ```
+
+The package automatically provides the correct module format based on your project's configuration.
+
 ## Table of Contents
 
 - [Core Components](#core-components)

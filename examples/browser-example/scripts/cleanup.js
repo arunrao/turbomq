@@ -1,7 +1,7 @@
 // Simple script to clean up the database and uploads directory
-const { PrismaClient } = require('@prisma/client');
-const fs = require('fs');
-const path = require('path');
+import { PrismaClient } from '@prisma/client';
+import fs from 'fs';
+import path from 'path';
 
 async function cleanupDatabase() {
   console.log('🧹 Starting database cleanup...');

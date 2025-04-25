@@ -1,13 +1,21 @@
 {
   "name": "turbomq",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "A powerful job queue system for Next.js applications",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "type": "module",
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "npm run clean && tsc",
+    "build": "npm run clean && tsc && tsc -p tsconfig.cjs.json",
     "prepare": "npm run build",
     "test": "jest",
     "lint": "eslint src --ext .ts,.tsx",
