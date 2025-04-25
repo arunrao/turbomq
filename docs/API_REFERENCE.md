@@ -2,7 +2,7 @@
 
 This document provides a comprehensive reference for all the components, classes, and methods available in the Next.js Queue System.
 
-## Version 1.2.2
+## Version 1.2.3
 
 ### Module System Support
 The package now supports both ES Modules (ESM) and CommonJS module systems:
@@ -18,6 +18,13 @@ The package now supports both ES Modules (ESM) and CommonJS module systems:
   ```
 
 The package automatically provides the correct module format based on your project's configuration.
+
+### Type Definitions
+Added internal type definitions for:
+- `uuid` module
+- `pg` (PostgreSQL) module
+
+This resolves TypeScript compilation issues when using these dependencies.
 
 ## Table of Contents
 

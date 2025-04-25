@@ -1,6 +1,6 @@
 {
   "name": "turbomq",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "A powerful job queue system for Next.js applications",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -15,7 +15,9 @@
   "type": "module",
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "npm run clean && tsc && tsc -p tsconfig.cjs.json",
+    "build:esm": "tsc -p tsconfig.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build": "npm run clean && npm run build:esm && npm run build:cjs",
     "prepare": "npm run build",
     "test": "jest",
     "lint": "eslint src --ext .ts,.tsx",
@@ -52,7 +54,7 @@
   "devDependencies": {
     "@types/jest": "^29.0.0",
     "@types/node": "^18.19.86",
-    "@types/pg": "^8.10.0",
+    "@types/pg": "^8.11.14",
     "@types/react": "^18.0.0",
     "@types/uuid": "^9.0.8",
     "@typescript-eslint/eslint-plugin": "^5.0.0",

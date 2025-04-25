@@ -1,7 +1,7 @@
 import { DbAdapter, Job, JobHandler, JobHelpers, JobOptions } from './types';
 import { EventManager } from './events';
 import { WebhookService } from './services/webhook-service';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 } from 'uuid/dist/v4.js';
 
 export interface ShutdownOptions {
   timeout?: number;
@@ -174,7 +174,7 @@ export class Queue {
           if (abortController.signal.aborted) {
             throw new Error('Job was killed');
           }
-          return `result-${job.id}-${uuidv4()}`;
+          return `result-${job.id}-${v4()}`;
         },
         // Add cleanup function to helpers
         cleanup: async () => {

@@ -42,12 +42,21 @@ const nextConfig = {
       };
     }
 
+    // Add support for importing ESM modules
+    config.resolve.extensionAlias = {
+      '.js': ['.js', '.ts', '.tsx'],
+      '.mjs': ['.mjs', '.mts', '.mtsx'],
+    };
+
     return config;
   },
   // Enable TypeScript strict mode
   typescript: {
     ignoreBuildErrors: false,
   },
+  experimental: {
+    esmExternals: true
+  }
 };
 
-module.exports = nextConfig;
+export default nextConfig;
