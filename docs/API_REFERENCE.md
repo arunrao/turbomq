@@ -52,10 +52,13 @@ The `Queue` class is the main entry point for interacting with the job queue sys
 #### Constructor
 
 ```typescript
-constructor(db: DbAdapter)
+constructor(db: DbAdapter, options?: { schedulerCheckIntervalMs?: number; enableScheduler?: boolean })
 ```
 
 - `db`: An implementation of the `DbAdapter` interface
+- `options`: Optional configuration
+  - `schedulerCheckIntervalMs`: How often the scheduler should check for jobs to run (default: 60000ms)
+  - `enableScheduler`: Explicitly enable or disable the scheduler (default: auto-detect based on adapter capabilities)
 
 #### Methods
 
@@ -428,15 +431,18 @@ Determines if the current environment is serverless.
 
 The `Scheduler` class manages scheduled jobs, both one-time and recurring.
 
+> **Note:** Scheduler functionality is automatically enabled only when using database adapters that support scheduling features. If your adapter doesn't implement the required scheduling methods (`createScheduledJob`, `getScheduledJobsToRun`, etc.), the scheduling features will be disabled. You can explicitly enable or disable the scheduler by passing `enableScheduler: true|false` in the Queue constructor options.
+
 ### Constructor
 
 ```typescript
-constructor(db: DbAdapter, options?: { checkIntervalMs?: number })
+constructor(db: DbAdapter, options?: { checkIntervalMs?: number; logger?: { debug: (message: string) => void } })
 ```
 
 - `db`: The database adapter
 - `options`: Optional configuration
   - `checkIntervalMs`: How often to check for jobs to run (default: 60000ms)
+  - `logger`: Optional logger object for debugging
 
 ### Methods
 

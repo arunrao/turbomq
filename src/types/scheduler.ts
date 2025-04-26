@@ -114,6 +114,10 @@ export interface SchedulerMetrics {
   averageRunTime?: number; // In milliseconds
   jobsScheduledCount: number;
   jobsProcessedCount: number;
+  // Properties used in the implementation
+  jobsScheduled: number;
+  jobsProcessed: number;
+  runTimes: number[];
   errors: Array<{
     timestamp: Date;
     message: string;

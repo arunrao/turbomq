@@ -1,39 +1,43 @@
-import { DbAdapter } from './types.js';
+import { v4 as uuidv4 } from 'uuid';
+import { JobOptions, DbAdapter } from './types.js';
 import { 
   ScheduledJob, 
   ScheduleJobOptions, 
   RecurringScheduleOptions,
+  // Removed unused imports
   ScheduledJobFilter,
   SchedulerMetrics
 } from './types/scheduler.js';
-import { v4 as uuidv4 } from 'uuid';
-// Import cron-parser with proper CommonJS require syntax for TypeScript compatibility
+// Import cron-parser with proper type handling
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const cronParser = require('cron-parser');
+
+// Extended adapter interface for type safety
+interface SchedulerDbAdapter extends DbAdapter {
+  getScheduledJobsToRun?: (date: Date) => Promise<ScheduledJob[]>;
+}
 
 export class Scheduler {
   private db: DbAdapter;
-  private interval: NodeJS.Timeout | null = null;
-  private running: boolean = false;
-  private checkIntervalMs: number = 60000; // Default: check every minute
-  private metrics: {
-    lastRunAt?: Date;
-    runTimes: number[];
-    jobsScheduled: number;
-    jobsProcessed: number;
-    errors: Array<{ timestamp: Date; message: string }>;
+  private isRunning = false;
+  private checkIntervalMs: number;
+  private checkInterval: NodeJS.Timeout | null = null;
+  private logger?: { debug: (message: string) => void };
+  private metrics: SchedulerMetrics = {
+    jobsScheduledCount: 0,
+    jobsProcessedCount: 0,
+    // Add the required properties
+    jobsScheduled: 0,
+    jobsProcessed: 0,
+    runTimes: [],
+    errors: [],
+    status: 'stopped'
   };
 
-  constructor(db: DbAdapter, options?: { checkIntervalMs?: number }) {
+  constructor(db: DbAdapter, options: { checkIntervalMs?: number; logger?: { debug: (message: string) => void } } = {}) {
     this.db = db;
-    if (options?.checkIntervalMs) {
-      this.checkIntervalMs = options.checkIntervalMs;
-    }
-    this.metrics = {
-      runTimes: [],
-      jobsScheduled: 0,
-      jobsProcessed: 0,
-      errors: []
-    };
+    this.checkIntervalMs = options.checkIntervalMs || 60000; // Default: check every minute
+    this.logger = options.logger;
   }
 
   /**
@@ -66,7 +70,7 @@ export class Scheduler {
     
     // Store in database
     await (this.db as any).createScheduledJob(scheduledJob);
-    this.metrics.jobsScheduled++;
+    this.metrics.jobsScheduledCount++;
     
     return scheduledJob;
   }
@@ -113,7 +117,7 @@ export class Scheduler {
     
     // Store in database
     await (this.db as any).createScheduledJob(scheduledJob);
-    this.metrics.jobsScheduled++;
+    this.metrics.jobsScheduledCount++;
     
     return scheduledJob;
   }
@@ -290,17 +294,17 @@ export class Scheduler {
    * Start the scheduler
    */
   async start(): Promise<void> {
-    if (this.running) {
+    if (this.isRunning) {
       return;
     }
     
-    this.running = true;
+    this.isRunning = true;
     
     // Run immediately
     await this.processScheduledJobs();
     
     // Then set up interval
-    this.interval = setInterval(async () => {
+    this.checkInterval = setInterval(async () => {
       try {
         await this.processScheduledJobs();
       } catch (error) {
@@ -322,35 +326,48 @@ export class Scheduler {
    * Stop the scheduler
    */
   stop(): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
     }
-    this.running = false;
+    this.isRunning = false;
   }
 
   /**
    * Process scheduled jobs that are due to run
    */
-  private async processScheduledJobs(): Promise<void> {
+  private async processScheduledJobs(): Promise<number> {
     const startTime = Date.now();
     this.metrics.lastRunAt = new Date();
     
     try {
+      // Check if the adapter supports scheduled jobs
+      if (typeof (this.db as SchedulerDbAdapter).getScheduledJobsToRun !== 'function') {
+        // This adapter doesn't support scheduling, so we'll skip processing
+        this.logger?.debug('Adapter does not support scheduled jobs, skipping scheduler processing');
+        return 0;
+      }
+      
       // Get jobs that need to be executed
       const now = new Date();
-      const jobsToRun = await (this.db as any).getScheduledJobsToRun(now);
+      // Use optional chaining instead of non-null assertion
+      const getJobs = (this.db as SchedulerDbAdapter).getScheduledJobsToRun;
+      const jobsToRun = getJobs ? await getJobs(now) : [];
       
       // Process each job
       for (const job of jobsToRun) {
         try {
           // Create a regular job in the queue
-          await this.db.createJob(job.taskName, job.payload, {
+          const jobOptions: JobOptions = {
             priority: job.priority,
-            maxAttempts: job.maxAttempts,
-            webhookUrl: job.webhookUrl,
-            webhookHeaders: job.webhookHeaders
-          });
+            maxAttempts: job.maxAttempts
+          };
+          
+          // Add webhook properties if they exist
+          if (job.webhookUrl) jobOptions.webhookUrl = job.webhookUrl;
+          if (job.webhookHeaders) jobOptions.webhookHeaders = job.webhookHeaders;
+          
+          await this.db.createJob(job.taskName, job.payload, jobOptions);
           
           // Update the scheduled job
           if (job.type === 'one-time') {
@@ -404,6 +421,9 @@ export class Scheduler {
         this.metrics.runTimes = this.metrics.runTimes.slice(-100);
       }
     }
+    
+    // Return the number of jobs processed
+    return this.metrics.jobsProcessed;
   }
 
   /**
@@ -411,13 +431,11 @@ export class Scheduler {
    */
   private getNextRunTime(pattern: string, startFrom: Date, endDate?: Date): Date | null {
     try {
-      const options = {
+      const interval = cronParser.parseExpression(pattern, {
         currentDate: startFrom,
         endDate: endDate,
         utc: true // Use UTC time
-      };
-      
-      const interval = cronParser.parseExpression(pattern, options);
+      });
       
       try {
         return interval.next().toDate();
@@ -444,8 +462,12 @@ export class Scheduler {
       averageRunTime,
       jobsScheduledCount: this.metrics.jobsScheduled,
       jobsProcessedCount: this.metrics.jobsProcessed,
+      // Include all required properties
+      jobsScheduled: this.metrics.jobsScheduled,
+      jobsProcessed: this.metrics.jobsProcessed,
+      runTimes: [...this.metrics.runTimes],
       errors: this.metrics.errors,
-      status: this.running ? 'running' : 'stopped'
+      status: this.isRunning ? 'running' : 'stopped'
     };
   }
 

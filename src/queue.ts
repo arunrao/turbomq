@@ -14,20 +14,39 @@ export class Queue {
   private handlers: Map<string, JobHandler<any>> = new Map();
   private events: EventManager;
   private isShuttingDown = false;
-  private activeJobs: Set<string> = new Set();
   private shutdownPromise: Promise<void> | null = null;
+  private activeJobs: Set<string> = new Set();
   private jobHandlers: Map<string, { abortController: AbortController; cleanup?: () => Promise<void> }> = new Map();
-  private scheduler: Scheduler;
+  private scheduler?: Scheduler;
   
-  constructor(private db: DbAdapter, options?: { schedulerCheckIntervalMs?: number }) {
+  constructor(private db: DbAdapter, options?: { schedulerCheckIntervalMs?: number; enableScheduler?: boolean }) {
     this.events = new EventManager();
-    this.scheduler = new Scheduler(db, { checkIntervalMs: options?.schedulerCheckIntervalMs });
+    
+    // Only create scheduler if explicitly enabled or if the adapter supports scheduling methods
+    const enableScheduler = options?.enableScheduler ?? this.adapterSupportsScheduling();
+    
+    if (enableScheduler) {
+      this.scheduler = new Scheduler(db, { checkIntervalMs: options?.schedulerCheckIntervalMs });
+    }
+  }
+  
+  /**
+   * Check if the database adapter supports scheduling functionality
+   */
+  private adapterSupportsScheduling(): boolean {
+    // Check for essential scheduling methods
+    return (
+      typeof (this.db as any).createScheduledJob === 'function' &&
+      typeof (this.db as any).getScheduledJobsToRun === 'function'
+    );
   }
 
   async init(): Promise<void> {
     await this.db.connect();
-    // Start the scheduler
-    await this.scheduler.start();
+    // Start the scheduler if it exists
+    if (this.scheduler) {
+      await this.scheduler.start();
+    }
   }
 
   async shutdown(options: ShutdownOptions = {}): Promise<void> {
@@ -86,8 +105,10 @@ export class Queue {
           await this.killJobs(Array.from(this.activeJobs), 'Forced shutdown', timeout);
         }
 
-        // Stop the scheduler
-        this.scheduler.stop();
+        // Stop the scheduler if it exists
+        if (this.scheduler) {
+          this.scheduler.stop();
+        }
         
         // Disconnect from database with timeout
         const dbTimeoutPromise = new Promise((_, reject) => {
@@ -416,6 +437,9 @@ export class Queue {
    * @param options Scheduling options including when to run the job
    */
   async scheduleJob<T>(taskName: string, payload: T, options: ScheduleJobOptions): Promise<ScheduledJob> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     if (!this.handlers.has(taskName)) {
       throw new Error(`No handler registered for task: ${taskName}`);
     }
@@ -430,6 +454,9 @@ export class Queue {
    * @param options Scheduling options including cron pattern
    */
   async scheduleRecurringJob<T>(taskName: string, payload: T, options: RecurringScheduleOptions): Promise<ScheduledJob> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     if (!this.handlers.has(taskName)) {
       throw new Error(`No handler registered for task: ${taskName}`);
     }
@@ -442,6 +469,9 @@ export class Queue {
    * @param id The ID of the scheduled job
    */
   async getScheduledJobById(id: string): Promise<ScheduledJob | null> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     return await this.scheduler.getScheduledJobById(id);
   }
 
@@ -450,6 +480,9 @@ export class Queue {
    * @param filter Optional filter criteria
    */
   async listScheduledJobs(filter?: ScheduledJobFilter): Promise<ScheduledJob[]> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     return await this.scheduler.listScheduledJobs(filter);
   }
 
@@ -459,6 +492,9 @@ export class Queue {
    * @param updates The updates to apply to the job
    */
   async updateScheduledJob(id: string, updates: Partial<ScheduleJobOptions | RecurringScheduleOptions>): Promise<ScheduledJob> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     return await this.scheduler.updateScheduledJob(id, updates);
   }
 
@@ -467,6 +503,9 @@ export class Queue {
    * @param id The ID of the scheduled job to pause
    */
   async pauseScheduledJob(id: string): Promise<ScheduledJob> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     return await this.scheduler.pauseScheduledJob(id);
   }
 
@@ -475,6 +514,9 @@ export class Queue {
    * @param id The ID of the scheduled job to resume
    */
   async resumeScheduledJob(id: string): Promise<ScheduledJob> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     return await this.scheduler.resumeScheduledJob(id);
   }
 
@@ -483,13 +525,25 @@ export class Queue {
    * @param id The ID of the scheduled job to cancel
    */
   async cancelScheduledJob(id: string): Promise<void> {
+    if (!this.scheduler) {
+      throw new Error('Scheduler is not available. The current database adapter may not support scheduling features.');
+    }
     await this.scheduler.cancelScheduledJob(id);
   }
 
   /**
    * Get scheduler metrics
    */
-  async getSchedulerMetrics() {
+  async getSchedulerMetrics(): Promise<any> {
+    if (!this.scheduler) {
+      // Return default metrics if scheduler is not available
+      return {
+        jobsScheduledCount: 0,
+        jobsProcessedCount: 0,
+        errors: [],
+        status: 'stopped'
+      };
+    }
     return this.scheduler.getMetrics();
   }
 
@@ -497,7 +551,10 @@ export class Queue {
    * Reschedule overdue jobs
    */
   async rescheduleOverdueJobs(): Promise<number> {
-    return await this.scheduler.rescheduleOverdueJobs();
+    if (!this.scheduler) {
+      return 0; // No jobs to reschedule if scheduler is not available
+    }
+    return this.scheduler.rescheduleOverdueJobs();
   }
 
   /**
@@ -505,6 +562,9 @@ export class Queue {
    * @param beforeDate Remove jobs completed before this date
    */
   async cleanupCompletedScheduledJobs(beforeDate: Date): Promise<number> {
-    return await this.scheduler.cleanupCompletedScheduledJobs(beforeDate);
+    if (!this.scheduler) {
+      return 0; // No jobs to clean up if scheduler is not available
+    }
+    return this.scheduler.cleanupCompletedScheduledJobs(beforeDate);
   }
 }

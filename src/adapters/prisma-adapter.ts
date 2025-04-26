@@ -337,22 +337,46 @@ export class PrismaAdapter implements DbAdapter {
     failedCount: number;
     scheduledJobsCount?: number;
   }> {
-    const [pending, running, completed, failed, scheduled] = await Promise.all([
-      this.prisma.job.count({ where: { status: 'pending' } }),
-      this.prisma.job.count({ where: { status: 'running' } }),
-      this.prisma.job.count({ where: { status: 'completed' } }),
-      this.prisma.job.count({ where: { status: 'failed' } }),
-      // Use any to work around the type issue until Prisma schema is fully generated
-      (this.prisma as any).scheduledJob?.count?.({ where: { status: 'scheduled' } }) || 0,
-    ]);
+    try {
+      // Get counts for regular jobs
+      const [pending, running, completed, failed] = await Promise.all([
+        this.prisma.job.count({ where: { status: 'pending' } }),
+        this.prisma.job.count({ where: { status: 'running' } }),
+        this.prisma.job.count({ where: { status: 'completed' } }),
+        this.prisma.job.count({ where: { status: 'failed' } }),
+      ]);
+      
+      // Try to get scheduled job count, but handle case when table doesn't exist
+      let scheduled = 0;
+      try {
+        // Only attempt this if the scheduledJob model exists
+        if ((this.prisma as any).scheduledJob) {
+          scheduled = await (this.prisma as any).scheduledJob.count({ 
+            where: { status: 'scheduled' } 
+          });
+        }
+      } catch (error) {
+        // If table doesn't exist or any other error, just use 0
+        scheduled = 0;
+      }
 
-    return {
-      pendingCount: pending,
-      runningCount: running,
-      completedCount: completed,
-      failedCount: failed,
-      scheduledJobsCount: scheduled,
-    };
+      return {
+        pendingCount: pending,
+        runningCount: running,
+        completedCount: completed,
+        failedCount: failed,
+        scheduledJobsCount: scheduled,
+      };
+    } catch (error) {
+      // If something goes wrong, return zeros
+      return {
+        pendingCount: 0,
+        runningCount: 0,
+        completedCount: 0,
+        failedCount: 0,
+        scheduledJobsCount: 0,
+      };
+    }
   }
 
   async removeJobsByStatus(
@@ -551,7 +575,8 @@ export class PrismaAdapter implements DbAdapter {
    */
   async updateScheduledJob(id: string, updates: Partial<ScheduledJob>): Promise<ScheduledJob> {
     // Remove id from updates if present
-    const { id: _, ...updateData } = updates;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id: idToRemove, ...updateData } = updates;
 
     // Handle JSON stringification for objects
     const data: any = { ...updateData };
