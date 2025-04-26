@@ -2,6 +2,14 @@
 
 All notable changes to TurboMQ will be documented in this file.
 
+## [1.4.1] - 2025-04-25
+
+### Bug Fixes
+
+- **PostgresAdapter**: Fixed column name mismatch in PostgresAdapter (using 'payload' instead of 'data')
+- **PostgresAdapter**: Added missing methods required by Worker class (fetchNextJob, fetchNextBatch, cleanupStaleJobs, heartbeat)
+- **Documentation**: Added comprehensive PostgreSQL adapter guide with examples
+
 ## [1.4.0] - 2025-04-25
 
 ### Added

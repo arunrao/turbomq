@@ -4,7 +4,7 @@ export interface Job {
   id: string;
   taskName: string;
   status: JobStatus;
-  data: unknown;
+  payload: unknown;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -18,6 +18,7 @@ export enum JobStatus {
 
 export class PostgresAdapter {
   private sql: postgres.Sql<Record<string, unknown>> | null = null;
+  private staleJobTimeoutMs: number = 5 * 60 * 1000; // 5 minutes
 
   constructor(options?: { connectionString?: string; host?: string; port?: number; database?: string; username?: string; password?: string; ssl?: boolean }) {
     if (options?.connectionString) {
@@ -60,8 +61,8 @@ export class PostgresAdapter {
     if (!this.sql) throw new Error('Not connected to database');
     
     await this.sql`
-      INSERT INTO jobs (id, task_name, status, data, created_at, updated_at)
-      VALUES (${job.id}, ${job.taskName}, ${job.status}, ${JSON.stringify(job.data)}, ${job.createdAt}, ${job.updatedAt})
+      INSERT INTO jobs (id, task_name, status, payload, created_at, updated_at)
+      VALUES (${job.id}, ${job.taskName}, ${job.status}, ${JSON.stringify(job.payload)}, ${job.createdAt}, ${job.updatedAt})
     `;
   }
 
@@ -69,7 +70,7 @@ export class PostgresAdapter {
     if (!this.sql) throw new Error('Not connected to database');
     
     const [result] = await this.sql<Job[]>`
-      SELECT id, task_name as "taskName", status, data, created_at as "createdAt", updated_at as "updatedAt"
+      SELECT id, task_name as "taskName", status, payload, created_at as "createdAt", updated_at as "updatedAt"
       FROM jobs
       WHERE id = ${id}
     `;
@@ -82,7 +83,7 @@ export class PostgresAdapter {
     
     if (taskName) {
       return await this.sql<Job[]>`
-        SELECT id, task_name as "taskName", status, data, created_at as "createdAt", updated_at as "updatedAt"
+        SELECT id, task_name as "taskName", status, payload, created_at as "createdAt", updated_at as "updatedAt"
         FROM jobs
         WHERE status = ${status} AND task_name = ${taskName}
         ORDER BY created_at ASC
@@ -90,7 +91,7 @@ export class PostgresAdapter {
     }
     
     return await this.sql<Job[]>`
-      SELECT id, task_name as "taskName", status, data, created_at as "createdAt", updated_at as "updatedAt"
+      SELECT id, task_name as "taskName", status, payload, created_at as "createdAt", updated_at as "updatedAt"
       FROM jobs
       WHERE status = ${status}
       ORDER BY created_at ASC
@@ -103,7 +104,7 @@ export class PostgresAdapter {
     await this.sql`
       UPDATE jobs
       SET status = ${job.status},
-          data = ${JSON.stringify(job.data)},
+          payload = ${JSON.stringify(job.payload)},
           updated_at = ${job.updatedAt}
       WHERE id = ${job.id}
     `;
@@ -151,6 +152,85 @@ export class PostgresAdapter {
         RETURNING COUNT(*)
       `;
     }
+    
+    return result[0]?.count || 0;
+  }
+
+  /**
+   * Fetch the next available job for a worker
+   */
+  async fetchNextJob(_workerId: string, availableTasks: string[]): Promise<Job | null> {
+    if (!this.sql) throw new Error('Not connected to database');
+    if (availableTasks.length === 0) return null;
+    
+    // Get the next pending job for one of the available tasks
+    const [job] = await this.sql<Job[]>`
+      UPDATE jobs
+      SET status = 'running', updated_at = NOW()
+      WHERE id = (
+        SELECT id FROM jobs
+        WHERE status = 'pending'
+          AND task_name = ANY(${availableTasks})
+        ORDER BY created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, task_name as "taskName", status, payload, created_at as "createdAt", updated_at as "updatedAt"
+    `;
+    
+    return job || null;
+  }
+
+  /**
+   * Fetch a batch of jobs for a worker
+   */
+  async fetchNextBatch(_workerId: string, availableTasks: string[], batchSize = 5): Promise<Job[]> {
+    if (!this.sql) throw new Error('Not connected to database');
+    if (availableTasks.length === 0) return [];
+    
+    // Get a batch of pending jobs for the available tasks
+    const jobs = await this.sql<Job[]>`
+      WITH batch AS (
+        SELECT id FROM jobs
+        WHERE status = 'pending'
+          AND task_name = ANY(${availableTasks})
+        ORDER BY created_at ASC
+        LIMIT ${batchSize}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE jobs
+      SET status = 'running', updated_at = NOW()
+      WHERE id IN (SELECT id FROM batch)
+      RETURNING id, task_name as "taskName", status, payload, created_at as "createdAt", updated_at as "updatedAt"
+    `;
+    
+    return jobs;
+  }
+
+  /**
+   * Update worker heartbeat
+   */
+  async heartbeat(_workerId: string, _jobId?: string): Promise<void> {
+    // This is a no-op for PostgresAdapter as we don't track worker heartbeats
+    // In a production environment, you might want to store worker heartbeats
+    // to detect and recover from worker failures
+  }
+
+  /**
+   * Clean up stale jobs that have been in the running state for too long
+   */
+  async cleanupStaleJobs(): Promise<number> {
+    if (!this.sql) throw new Error('Not connected to database');
+    
+    const staleTime = new Date(Date.now() - this.staleJobTimeoutMs);
+    
+    const result = await this.sql<{ count: number }[]>`
+      UPDATE jobs
+      SET status = 'pending', updated_at = NOW()
+      WHERE status = 'running'
+        AND updated_at < ${staleTime}
+      RETURNING COUNT(*)
+    `;
     
     return result[0]?.count || 0;
   }

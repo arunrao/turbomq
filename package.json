@@ -1,6 +1,6 @@
 {
   "name": "turbomq",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "A powerful job queue system for Next.js applications",
   "type": "module",
   "main": "./dist/index.js",
