@@ -29,10 +29,41 @@ model Job {
   lastHeartbeat DateTime? // Last time the worker sent a heartbeat
   webhookUrl    String?   // URL to send webhook notifications to
   webhookHeaders String?  // JSON string of headers to include in webhook requests
-  
+
   @@index([status, runAt, priority])
   @@index([taskName, status])
   @@index([workerId])
+}
+
+model ScheduledJob {
+  id             String    @id @default(uuid())
+  taskName       String
+  payload        String    // JSON string
+  type           String    // one-time or recurring
+  status         String    @default("scheduled") // scheduled, paused, completed, cancelled
+  
+  // For one-time jobs
+  runAt          DateTime?
+  
+  // For recurring jobs
+  pattern        String?   // cron expression
+  startDate      DateTime?
+  endDate        DateTime?
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+  
+  // Common fields
+  priority       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  webhookUrl     String?
+  webhookHeaders String?   // JSON string
+  metadata       String?   // JSON string for additional metadata
+  
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([nextRunAt, status]) // Index for efficient querying of jobs to be executed
+  @@index([type, status])      // Index for filtering by type and status
 }
 
 model JobResult {

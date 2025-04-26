@@ -1,6 +1,6 @@
-# Deployment Guide for Next.js Queue System
+# Deployment Guide for TurboMQ
 
-This guide provides instructions for deploying and using the Next.js Queue System in different environments, with a focus on serverless platforms.
+This guide provides instructions for deploying and using the TurboMQ job queue system in different environments, with a focus on serverless platforms and the new job scheduling feature.
 
 ## Table of Contents
 
@@ -11,6 +11,7 @@ This guide provides instructions for deploying and using the Next.js Queue Syste
 - [Environment Configuration](#environment-configuration)
 - [Database Setup](#database-setup)
 - [Job Processing Strategies](#job-processing-strategies)
+- [Scheduler Deployment](#scheduler-deployment)
 
 ## Local Development
 
@@ -41,6 +42,20 @@ npm run dev
 ```
 
 This will start a worker pool that automatically scales based on queue depth.
+
+4. To use the scheduler feature, make sure to start it when initializing your queue:
+
+```typescript
+import { Queue } from 'turbomq';
+import { PrismaAdapter } from 'turbomq/adapters/prisma-adapter';
+
+const adapter = new PrismaAdapter();
+const queue = new Queue(adapter);
+
+// Initialize the queue and start the scheduler
+await queue.init();
+// The scheduler starts automatically during init()
+```
 
 ## Vercel Deployment
 
@@ -193,6 +208,110 @@ After changing the database provider, run:
 npx prisma generate
 npx prisma db push
 ```
+
+## Scheduler Deployment
+
+The new scheduler feature in TurboMQ v1.4.0 allows you to schedule jobs to run at specific times or on recurring schedules using cron expressions. Here are deployment considerations for the scheduler:
+
+### 1. Database Requirements
+
+The scheduler requires a database that supports the `ScheduledJob` model. Make sure your Prisma schema includes this model and you've run migrations to create the necessary tables.
+
+### 2. Serverless Environments
+
+In serverless environments like Vercel or AWS Lambda, the scheduler needs special consideration:
+
+#### Option 1: Dedicated Scheduler Service
+
+Deploy a dedicated service (e.g., on a small VPS or container) that runs continuously to check for and execute scheduled jobs:
+
+```typescript
+// scheduler-service.js
+import { Queue } from 'turbomq';
+import { PrismaAdapter } from 'turbomq/adapters/prisma-adapter';
+
+async function startScheduler() {
+  const adapter = new PrismaAdapter();
+  const queue = new Queue(adapter);
+  
+  // Register task handlers
+  queue.registerTask('dailyReport', async (payload) => {
+    // Task implementation
+  });
+  
+  // Initialize queue (starts the scheduler)
+  await queue.init();
+  
+  console.log('Scheduler service started');
+  
+  // Handle graceful shutdown
+  process.on('SIGTERM', async () => {
+    console.log('Shutting down scheduler...');
+    await queue.shutdown();
+    process.exit(0);
+  });
+}
+
+startScheduler().catch(console.error);
+```
+
+Run this with a process manager like PM2:
+
+```bash
+pm2 start scheduler-service.js --name "turbomq-scheduler"
+pm2 save
+pm2 startup
+```
+
+#### Option 2: Cron-Triggered Serverless Function
+
+Use a cron job to trigger a serverless function that checks for and executes scheduled jobs:
+
+```typescript
+// pages/api/run-scheduler.ts (Next.js)
+import { Queue } from 'turbomq';
+import { PrismaAdapter } from 'turbomq/adapters/prisma-adapter';
+
+export default async function handler(req, res) {
+  // Only allow this endpoint to be triggered by cron
+  if (req.headers['x-cron-key'] !== process.env.CRON_SECRET_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const adapter = new PrismaAdapter();
+  const queue = new Queue(adapter);
+  await queue.init();
+  
+  // Process any scheduled jobs that are due
+  const metrics = await queue.getSchedulerMetrics();
+  
+  // Clean up old completed jobs (optional)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  await queue.cleanupCompletedScheduledJobs(thirtyDaysAgo);
+  
+  await queue.shutdown();
+  
+  res.status(200).json({ success: true, metrics });
+}
+```
+
+Set up a cron job to hit this endpoint every minute:
+
+```
+* * * * * curl -H "x-cron-key: your-secret-key" https://your-app.vercel.app/api/run-scheduler
+```
+
+### 3. Monitoring
+
+Monitor your scheduler using the metrics API:
+
+```typescript
+const metrics = await queue.getSchedulerMetrics();
+console.log('Scheduler metrics:', metrics);
+```
+
+This provides information about job processing rates, errors, and scheduler status.
 
 ## Job Processing Strategies
 

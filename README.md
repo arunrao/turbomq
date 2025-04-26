@@ -16,15 +16,15 @@ A powerful job queue system for Next.js applications, built with TypeScript and 
 - 🔄 Automatic schema migration and validation
 - 🛑 Robust graceful shutdown with timeout support
 
-## What's New in v1.3.5
+## What's New in v1.4.0
 
-- 🔧 Fixed ESM compatibility issues with proper `.js` extensions in imports
-- 🐛 Improved database adapter shutdown process
-- 🔄 Enhanced foreign key constraint handling in PostgreSQL adapter
-- ✅ Fixed test suite to properly clean up resources
-- 📊 Added comprehensive job management API
-- 🔍 Improved queue administration capabilities
-- 📝 Enhanced TypeScript typings for better developer experience
+- 📅 Added job scheduling feature with one-time and recurring jobs
+- ⏰ Support for cron expressions to define recurring job patterns
+- 🔄 Automatic handling of scheduled job execution
+- 📊 Enhanced statistics API for both regular and scheduled jobs
+- 🌐 All scheduling operations use UTC time for consistency
+- 📝 Comprehensive documentation with examples for scheduled jobs
+- 🔧 Improved database schema with dedicated ScheduledJob model
 
 ## Installation
 

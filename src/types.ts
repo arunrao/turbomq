@@ -6,6 +6,9 @@ export enum JobStatus {
   FAILED = 'failed'
 }
 
+// Export scheduler types
+export * from './types/scheduler.js';
+
 export interface Job<T = any> {
   id: string;
   taskName: string;

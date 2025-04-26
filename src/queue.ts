@@ -2,6 +2,8 @@ import { DbAdapter, Job, JobHandler, JobHelpers, JobOptions, JobStatus } from '.
 import { EventManager } from './events';
 import { WebhookService } from './services/webhook-service';
 import { v4 } from 'uuid';
+import { Scheduler } from './scheduler.js';
+import { ScheduledJob, ScheduleJobOptions, RecurringScheduleOptions, ScheduledJobFilter } from './types/scheduler.js';
 
 export interface ShutdownOptions {
   timeout?: number;
@@ -15,13 +17,17 @@ export class Queue {
   private activeJobs: Set<string> = new Set();
   private shutdownPromise: Promise<void> | null = null;
   private jobHandlers: Map<string, { abortController: AbortController; cleanup?: () => Promise<void> }> = new Map();
+  private scheduler: Scheduler;
   
-  constructor(private db: DbAdapter) {
+  constructor(private db: DbAdapter, options?: { schedulerCheckIntervalMs?: number }) {
     this.events = new EventManager();
+    this.scheduler = new Scheduler(db, { checkIntervalMs: options?.schedulerCheckIntervalMs });
   }
 
   async init(): Promise<void> {
     await this.db.connect();
+    // Start the scheduler
+    await this.scheduler.start();
   }
 
   async shutdown(options: ShutdownOptions = {}): Promise<void> {
@@ -80,6 +86,9 @@ export class Queue {
           await this.killJobs(Array.from(this.activeJobs), 'Forced shutdown', timeout);
         }
 
+        // Stop the scheduler
+        this.scheduler.stop();
+        
         // Disconnect from database with timeout
         const dbTimeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Database disconnect timeout')), timeout);
@@ -396,5 +405,106 @@ export class Queue {
         !method.startsWith('_') &&
         method !== 'constructor'
       );
+  }
+
+  // Scheduler methods
+
+  /**
+   * Schedule a one-time job to run at a specific time
+   * @param taskName The name of the task to execute
+   * @param payload The data to pass to the task
+   * @param options Scheduling options including when to run the job
+   */
+  async scheduleJob<T>(taskName: string, payload: T, options: ScheduleJobOptions): Promise<ScheduledJob> {
+    if (!this.handlers.has(taskName)) {
+      throw new Error(`No handler registered for task: ${taskName}`);
+    }
+    
+    return await this.scheduler.scheduleJob(taskName, payload, options);
+  }
+
+  /**
+   * Schedule a recurring job using a cron pattern
+   * @param taskName The name of the task to execute
+   * @param payload The data to pass to the task
+   * @param options Scheduling options including cron pattern
+   */
+  async scheduleRecurringJob<T>(taskName: string, payload: T, options: RecurringScheduleOptions): Promise<ScheduledJob> {
+    if (!this.handlers.has(taskName)) {
+      throw new Error(`No handler registered for task: ${taskName}`);
+    }
+    
+    return await this.scheduler.scheduleRecurringJob(taskName, payload, options);
+  }
+
+  /**
+   * Get a scheduled job by ID
+   * @param id The ID of the scheduled job
+   */
+  async getScheduledJobById(id: string): Promise<ScheduledJob | null> {
+    return await this.scheduler.getScheduledJobById(id);
+  }
+
+  /**
+   * List scheduled jobs with optional filtering
+   * @param filter Optional filter criteria
+   */
+  async listScheduledJobs(filter?: ScheduledJobFilter): Promise<ScheduledJob[]> {
+    return await this.scheduler.listScheduledJobs(filter);
+  }
+
+  /**
+   * Update a scheduled job
+   * @param id The ID of the scheduled job to update
+   * @param updates The updates to apply to the job
+   */
+  async updateScheduledJob(id: string, updates: Partial<ScheduleJobOptions | RecurringScheduleOptions>): Promise<ScheduledJob> {
+    return await this.scheduler.updateScheduledJob(id, updates);
+  }
+
+  /**
+   * Pause a scheduled job
+   * @param id The ID of the scheduled job to pause
+   */
+  async pauseScheduledJob(id: string): Promise<ScheduledJob> {
+    return await this.scheduler.pauseScheduledJob(id);
+  }
+
+  /**
+   * Resume a paused scheduled job
+   * @param id The ID of the scheduled job to resume
+   */
+  async resumeScheduledJob(id: string): Promise<ScheduledJob> {
+    return await this.scheduler.resumeScheduledJob(id);
+  }
+
+  /**
+   * Cancel a scheduled job
+   * @param id The ID of the scheduled job to cancel
+   */
+  async cancelScheduledJob(id: string): Promise<void> {
+    await this.scheduler.cancelScheduledJob(id);
+  }
+
+  /**
+   * Get scheduler metrics
+   */
+  async getSchedulerMetrics() {
+    return this.scheduler.getMetrics();
+  }
+
+  /**
+   * Reschedule overdue jobs
+   */
+  async rescheduleOverdueJobs(): Promise<number> {
+    return await this.scheduler.rescheduleOverdueJobs();
+  }
+
+  /**
+   * Clean up completed scheduled jobs
+   * @param beforeDate Remove jobs completed before this date
+   */
+  async cleanupCompletedScheduledJobs(beforeDate: Date): Promise<number> {
+    return await this.scheduler.cleanupCompletedScheduledJobs(beforeDate);
   }
 }

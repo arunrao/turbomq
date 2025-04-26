@@ -38,6 +38,8 @@ export type JobHandler = (payload: any, helpers: JobHelpers) => Promise<any>;
 export interface DbAdapter {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  
+  // Regular job methods
   createJob: (taskName: string, payload: any, options?: JobOptions) => Promise<Job>;
   fetchNextJob: (workerId: string, availableTasks: string[]) => Promise<Job | null>;
   fetchNextBatch: (workerId: string, availableTasks: string[], batchSize?: number) => Promise<Job[]>;
@@ -51,11 +53,22 @@ export interface DbAdapter {
   cleanupStaleJobs: () => Promise<number>;
   storeResult: (jobId: string, result: any) => Promise<string>;
   getResult: (resultKey: string) => Promise<any>;
+  
+  // Scheduled job methods
+  createScheduledJob: (job: import('./scheduler.js').ScheduledJob) => Promise<import('./scheduler.js').ScheduledJob>;
+  getScheduledJobById: (id: string) => Promise<import('./scheduler.js').ScheduledJob | null>;
+  listScheduledJobs: (filter?: import('./scheduler.js').ScheduledJobFilter) => Promise<import('./scheduler.js').ScheduledJob[]>;
+  updateScheduledJob: (id: string, updates: Partial<import('./scheduler.js').ScheduledJob>) => Promise<import('./scheduler.js').ScheduledJob>;
+  deleteScheduledJob: (id: string) => Promise<void>;
+  getScheduledJobsToRun: (now: Date) => Promise<import('./scheduler.js').ScheduledJob[]>;
+  
+  // Statistics methods
   getQueueStats: () => Promise<{
     pendingCount: number;
     runningCount: number;
     completedCount: number;
     failedCount: number;
+    scheduledJobsCount?: number;
   }>;
 }
 

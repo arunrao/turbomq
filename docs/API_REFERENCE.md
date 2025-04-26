@@ -1,8 +1,8 @@
-# API Reference for Next.js Queue System
+# API Reference for TurboMQ
 
-This document provides a comprehensive reference for all the components, classes, and methods available in the Next.js Queue System.
+This document provides a comprehensive reference for all the components, classes, and methods available in the TurboMQ job queue system.
 
-## Version 1.2.3
+## Version 1.4.0
 
 ### Module System Support
 The package now supports both ES Modules (ESM) and CommonJS module systems:
@@ -32,12 +32,15 @@ This resolves TypeScript compilation issues when using these dependencies.
   - [Queue](#queue)
   - [Worker](#worker)
   - [WorkerPool](#workerpool)
+  - [Scheduler](#scheduler)
 - [Database Adapters](#database-adapters)
   - [PrismaAdapter](#prismaadapter)
 - [File Storage](#file-storage)
   - [LocalFileStorage](#localfilestorage)
 - [Helper Functions](#helper-functions)
 - [Types and Interfaces](#types-and-interfaces)
+  - [Job Types](#job-types)
+  - [Scheduled Job Types](#scheduled-job-types)
 - [Events System](#events-system)
 
 ## Core Components
@@ -111,9 +114,9 @@ Lists jobs with optional filtering.
   - `status`: Filter by job status
   - `taskName`: Filter by task name
 
-##### `async getQueueStats(): Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number; }>`
+##### `async getQueueStats(): Promise<{ pendingCount: number; runningCount: number; completedCount: number; failedCount: number; scheduledJobsCount?: number; }>`
 
-Gets statistics about the queue.
+Gets statistics about the queue, including counts of jobs in different states and scheduled jobs.
 
 ##### `async killJob(jobId: string, reason?: string, timeout?: number): Promise<void>`
 
@@ -131,9 +134,110 @@ Kills multiple running jobs with an optional reason and timeout.
 - `reason`: Optional reason for killing the jobs (default: 'Jobs killed by user')
 - `timeout`: Optional timeout in milliseconds (default: 5000)
 
+##### `async findJobsByStatus(status: JobStatus, options?: { taskName?: string; limit?: number; offset?: number; orderBy?: 'createdAt' | 'updatedAt' | 'runAt'; order?: 'asc' | 'desc'; }): Promise<Job[]>`
+
+Finds jobs by their status with additional filtering and pagination options.
+
+- `status`: The status to filter by
+- `options`: Additional options for filtering and pagination
+
+##### `async removeJobsByStatus(status: JobStatus, options?: { taskName?: string; beforeDate?: Date; limit?: number; }): Promise<number>`
+
+Removes jobs by their status with additional filtering options.
+
+- `status`: The status of jobs to remove
+- `options`: Additional options for filtering
+
+##### `async getDetailedJobInfo(options?: { status?: JobStatus; taskName?: string; limit?: number; offset?: number; includeResults?: boolean; includeErrors?: boolean; includeProgress?: boolean; }): Promise<{ jobs: Job[]; total: number; stats: { byStatus: Record<string, number>; byTask: Record<string, number>; averageProcessingTime?: number; successRate?: number; }; }>`
+
+Gets detailed information about jobs in different states with comprehensive statistics.
+
+- `options`: Options for filtering and pagination
+
+##### `getActiveJobsCount(): number`
+
+Gets the count of currently active jobs.
+
+##### `getActiveJobIds(): string[]`
+
+Gets the list of currently active job IDs.
+
+##### `getHandlers(): Map<string, JobHandler<any>>`
+
+Exposes the handlers map for worker to access available tasks.
+
 ##### `getAvailableMethods(): string[]`
 
 Returns an array of all available public methods on the Queue instance.
+
+#### Scheduler Methods
+
+##### `async scheduleJob(taskName: string, payload: any, options: ScheduleJobOptions): Promise<ScheduledJob>`
+
+Schedules a one-time job to run at a specific time.
+
+- `taskName`: The name of the task to execute
+- `payload`: The data to pass to the task
+- `options`: Scheduling options including when to run the job
+
+##### `async scheduleRecurringJob(taskName: string, payload: any, options: RecurringScheduleOptions): Promise<ScheduledJob>`
+
+Schedules a recurring job using a cron pattern.
+
+- `taskName`: The name of the task to execute
+- `payload`: The data to pass to the task
+- `options`: Scheduling options including cron pattern
+
+##### `async getScheduledJobById(id: string): Promise<ScheduledJob | null>`
+
+Gets a scheduled job by ID.
+
+- `id`: The ID of the scheduled job
+
+##### `async listScheduledJobs(filter?: ScheduledJobFilter): Promise<ScheduledJob[]>`
+
+Lists scheduled jobs with optional filtering.
+
+- `filter`: Optional filter criteria
+
+##### `async updateScheduledJob(id: string, updates: Partial<ScheduleJobOptions | RecurringScheduleOptions>): Promise<ScheduledJob>`
+
+Updates a scheduled job.
+
+- `id`: The ID of the scheduled job to update
+- `updates`: The updates to apply to the job
+
+##### `async pauseScheduledJob(id: string): Promise<ScheduledJob>`
+
+Pauses a scheduled job.
+
+- `id`: The ID of the scheduled job to pause
+
+##### `async resumeScheduledJob(id: string): Promise<ScheduledJob>`
+
+Resumes a paused scheduled job.
+
+- `id`: The ID of the scheduled job to resume
+
+##### `async cancelScheduledJob(id: string): Promise<void>`
+
+Cancels a scheduled job.
+
+- `id`: The ID of the scheduled job to cancel
+
+##### `async getSchedulerMetrics(): Promise<SchedulerMetrics>`
+
+Gets metrics about the scheduler.
+
+##### `async rescheduleOverdueJobs(): Promise<number>`
+
+Reschedules overdue jobs. Returns the number of jobs rescheduled.
+
+##### `async cleanupCompletedScheduledJobs(beforeDate: Date): Promise<number>`
+
+Cleans up completed scheduled jobs.
+
+- `beforeDate`: Remove jobs completed before this date
 
 #### Event Handlers
 
@@ -239,12 +343,42 @@ The `PrismaAdapter` class provides a Prisma-based implementation of the `DbAdapt
 #### Constructor
 
 ```typescript
-constructor()
+constructor(prisma?: PrismaClient)
 ```
+
+- `prisma`: Optional PrismaClient instance. If not provided, a new instance will be created.
 
 #### Methods
 
-Implements all methods required by the `DbAdapter` interface.
+Implements all methods required by the `DbAdapter` interface, including:
+
+- `connect()`: Connects to the database
+- `disconnect()`: Disconnects from the database
+- `createJob()`: Creates a new job
+- `fetchNextJob()`: Fetches the next available job
+- `fetchNextBatch()`: Fetches a batch of available jobs
+- `completeJob()`: Marks a job as completed
+- `failJob()`: Marks a job as failed
+- `updateJobProgress()`: Updates the progress of a job
+- `updateJobsBatch()`: Updates multiple jobs in a batch
+- `heartbeat()`: Sends a heartbeat for a worker or job
+- `getJobById()`: Gets a job by ID
+- `listJobs()`: Lists jobs with filtering
+- `cleanupStaleJobs()`: Cleans up stale jobs
+- `storeResult()`: Stores the result of a job
+- `getResult()`: Gets the result of a job
+- `getQueueStats()`: Gets queue statistics
+- `removeJobsByStatus()`: Removes jobs by status
+- `getDetailedJobInfo()`: Gets detailed job information
+
+And scheduler-related methods:
+
+- `createScheduledJob()`: Creates a scheduled job
+- `getScheduledJobById()`: Gets a scheduled job by ID
+- `listScheduledJobs()`: Lists scheduled jobs with filtering
+- `updateScheduledJob()`: Updates a scheduled job
+- `deleteScheduledJob()`: Deletes a scheduled job
+- `getScheduledJobsToRun()`: Gets scheduled jobs that need to be executed
 
 ## File Storage
 
@@ -290,15 +424,85 @@ Gets the configuration for the current environment.
 
 Determines if the current environment is serverless.
 
+## Scheduler
+
+The `Scheduler` class manages scheduled jobs, both one-time and recurring.
+
+### Constructor
+
+```typescript
+constructor(db: DbAdapter, options?: { checkIntervalMs?: number })
+```
+
+- `db`: The database adapter
+- `options`: Optional configuration
+  - `checkIntervalMs`: How often to check for jobs to run (default: 60000ms)
+
+### Methods
+
+#### `async start(): Promise<void>`
+
+Starts the scheduler.
+
+#### `stop(): void`
+
+Stops the scheduler.
+
+#### `async scheduleJob(taskName: string, payload: any, options: ScheduleJobOptions): Promise<ScheduledJob>`
+
+Schedules a one-time job to run at a specific time.
+
+#### `async scheduleRecurringJob(taskName: string, payload: any, options: RecurringScheduleOptions): Promise<ScheduledJob>`
+
+Schedules a recurring job using a cron pattern.
+
+#### `async getScheduledJobById(id: string): Promise<ScheduledJob | null>`
+
+Gets a scheduled job by ID.
+
+#### `async listScheduledJobs(filter?: ScheduledJobFilter): Promise<ScheduledJob[]>`
+
+Lists scheduled jobs with optional filtering.
+
+#### `async updateScheduledJob(id: string, updates: Partial<ScheduleJobOptions | RecurringScheduleOptions>): Promise<ScheduledJob>`
+
+Updates a scheduled job.
+
+#### `async pauseScheduledJob(id: string): Promise<ScheduledJob>`
+
+Pauses a scheduled job.
+
+#### `async resumeScheduledJob(id: string): Promise<ScheduledJob>`
+
+Resumes a paused scheduled job.
+
+#### `async cancelScheduledJob(id: string): Promise<void>`
+
+Cancels a scheduled job.
+
+#### `getMetrics(): SchedulerMetrics`
+
+Gets metrics about the scheduler.
+
+#### `async rescheduleOverdueJobs(): Promise<number>`
+
+Reschedules overdue jobs. Returns the number of jobs rescheduled.
+
+#### `async cleanupCompletedScheduledJobs(beforeDate: Date): Promise<number>`
+
+Cleans up completed scheduled jobs.
+
 ## Types and Interfaces
 
-### `JobStatus`
+### Job Types
+
+#### `JobStatus`
 
 ```typescript
 type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
 ```
 
-### `Job`
+#### `Job`
 
 ```typescript
 interface Job {
@@ -316,20 +520,24 @@ interface Job {
   completedAt?: Date;
   resultKey?: string;
   progress?: number;
+  webhookUrl?: string;
+  webhookHeaders?: Record<string, string>;
 }
 ```
 
-### `JobOptions`
+#### `JobOptions`
 
 ```typescript
 interface JobOptions {
   priority?: number;
   runAt?: Date;
   maxAttempts?: number;
+  webhookUrl?: string;
+  webhookHeaders?: Record<string, string>;
 }
 ```
 
-### `JobHelpers`
+#### `JobHelpers`
 
 ```typescript
 interface JobHelpers {
@@ -339,10 +547,111 @@ interface JobHelpers {
 }
 ```
 
-### `JobHandler`
+#### `JobHandler`
 
 ```typescript
 type JobHandler = (payload: any, helpers: JobHelpers) => Promise<any>;
+```
+
+### Scheduled Job Types
+
+#### `ScheduledJobType`
+
+```typescript
+type ScheduledJobType = 'one-time' | 'recurring';
+```
+
+#### `ScheduledJobStatus`
+
+```typescript
+type ScheduledJobStatus = 'scheduled' | 'paused' | 'completed' | 'cancelled';
+```
+
+#### `ScheduleJobOptions`
+
+```typescript
+interface ScheduleJobOptions {
+  runAt: Date; // UTC date when the job should run
+  priority?: number;
+  maxAttempts?: number;
+  webhookUrl?: string;
+  webhookHeaders?: Record<string, string>;
+  metadata?: Record<string, any>; // Additional metadata for the scheduled job
+}
+```
+
+#### `RecurringScheduleOptions`
+
+```typescript
+interface RecurringScheduleOptions {
+  pattern: string; // Cron expression (e.g., "0 0 * * *" for daily at midnight UTC)
+  startDate?: Date; // When to start the recurring schedule (default: now)
+  endDate?: Date; // When to end the recurring schedule (optional)
+  priority?: number;
+  maxAttempts?: number;
+  webhookUrl?: string;
+  webhookHeaders?: Record<string, string>;
+  metadata?: Record<string, any>;
+}
+```
+
+#### `ScheduledJob`
+
+```typescript
+interface ScheduledJob {
+  id: string;
+  taskName: string;
+  payload: any;
+  type: ScheduledJobType;
+  status: ScheduledJobStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  
+  // For one-time jobs
+  runAt?: Date;
+  
+  // For recurring jobs
+  pattern?: string;
+  startDate?: Date;
+  endDate?: Date;
+  lastRunAt?: Date;
+  nextRunAt?: Date;
+  
+  // Common fields
+  priority: number;
+  maxAttempts: number;
+  webhookUrl?: string;
+  webhookHeaders?: Record<string, string>;
+  metadata?: Record<string, any>;
+}
+```
+
+#### `ScheduledJobFilter`
+
+```typescript
+interface ScheduledJobFilter {
+  type?: ScheduledJobType;
+  status?: ScheduledJobStatus;
+  taskName?: string;
+  startDate?: Date; // Filter by jobs scheduled after this date
+  endDate?: Date; // Filter by jobs scheduled before this date
+  nextRunBefore?: Date; // Filter by jobs that will run before this date
+  limit?: number; // Limit the number of results
+  offset?: number; // Skip the first n results
+}
+```
+
+#### `SchedulerMetrics`
+
+```typescript
+interface SchedulerMetrics {
+  lastRunAt?: Date;
+  averageRunTime?: number;
+  jobsScheduledCount: number;
+  jobsProcessedCount: number;
+  errors: Array<{ timestamp: Date; message: string }>;
+  status: 'running' | 'stopped';
+}
 ```
 
 ### `DbAdapter`

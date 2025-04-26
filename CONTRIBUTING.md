@@ -1,6 +1,6 @@
-# Contributing to Next Queue
+# Contributing to TurboMQ
 
-We love your input! We want to make contributing to Next Queue as easy and transparent as possible, whether it's:
+We love your input! We want to make contributing to TurboMQ as easy and transparent as possible, whether it's:
 
 - Reporting a bug
 - Discussing the current state of the code
@@ -27,9 +27,9 @@ Pull requests are the best way to propose changes to the codebase. We actively w
 
 In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
 
-## Report bugs using Github's [issue tracker](https://github.com/yourusername/next-queue/issues)
+## Report bugs using Github's [issue tracker](https://github.com/arunrao/turbomq/issues)
 
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/yourusername/next-queue/issues/new); it's that easy!
+We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/arunrao/turbomq/issues/new); it's that easy!
 
 ## Write bug reports with detail, background, and sample code
 
@@ -47,8 +47,8 @@ We use GitHub issues to track public bugs. Report a bug by [opening a new issue]
 
 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/next-queue.git
-cd next-queue
+git clone https://github.com/arunrao/turbomq.git
+cd turbomq
 ```
 
 2. Install dependencies
@@ -91,11 +91,15 @@ npm run format
 
 ## Documentation
 
-We use TypeDoc for generating API documentation. Build the documentation with:
+We maintain comprehensive documentation in the `docs/` directory. The API reference is generated from code comments.
 
-```bash
-npm run docs
-```
+Key documentation files:
+- `API_REFERENCE.md`: Complete API documentation
+- `DEPLOYMENT.md`: Deployment strategies and configurations
+- `example-regular.md`: Examples of regular job usage
+- `example-scheduled.md`: Examples of scheduled job usage
+
+When contributing new features, please update the relevant documentation.
 
 ## Pull Request Process
 
@@ -160,7 +164,7 @@ an individual is officially representing the community in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-[your-email@example.com](mailto:your-email@example.com).
+[turbomq@example.com](mailto:turbomq@example.com).
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

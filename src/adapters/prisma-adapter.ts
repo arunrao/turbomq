@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { DbAdapter, Job, JobOptions, JobStatus } from '../types';
+import { ScheduledJob, ScheduledJobFilter } from '../types/scheduler.js';
 
 export class PrismaAdapter implements DbAdapter {
   private prisma: PrismaClient;
@@ -334,12 +335,15 @@ export class PrismaAdapter implements DbAdapter {
     runningCount: number;
     completedCount: number;
     failedCount: number;
+    scheduledJobsCount?: number;
   }> {
-    const [pending, running, completed, failed] = await Promise.all([
+    const [pending, running, completed, failed, scheduled] = await Promise.all([
       this.prisma.job.count({ where: { status: 'pending' } }),
       this.prisma.job.count({ where: { status: 'running' } }),
       this.prisma.job.count({ where: { status: 'completed' } }),
       this.prisma.job.count({ where: { status: 'failed' } }),
+      // Use any to work around the type issue until Prisma schema is fully generated
+      (this.prisma as any).scheduledJob?.count?.({ where: { status: 'scheduled' } }) || 0,
     ]);
 
     return {
@@ -347,6 +351,7 @@ export class PrismaAdapter implements DbAdapter {
       runningCount: running,
       completedCount: completed,
       failedCount: failed,
+      scheduledJobsCount: scheduled,
     };
   }
 
@@ -451,6 +456,185 @@ export class PrismaAdapter implements DbAdapter {
       webhookUrl: dbJob.webhookUrl || undefined,
       webhookHeaders: dbJob.webhookHeaders ? JSON.parse(dbJob.webhookHeaders) : undefined,
       retries: dbJob.attemptsMade || 0
+    };
+  }
+
+  // Scheduled Job Methods
+
+  /**
+   * Create a new scheduled job
+   */
+  async createScheduledJob(job: ScheduledJob): Promise<ScheduledJob> {
+    const dbJob = await (this.prisma as any).scheduledJob.create({
+      data: {
+        id: job.id,
+        taskName: job.taskName,
+        payload: JSON.stringify(job.payload),
+        type: job.type,
+        status: job.status,
+        runAt: job.runAt,
+        pattern: job.pattern,
+        startDate: job.startDate,
+        endDate: job.endDate,
+        lastRunAt: job.lastRunAt,
+        nextRunAt: job.nextRunAt,
+        priority: job.priority || 0,
+        maxAttempts: job.maxAttempts || 3,
+        webhookUrl: job.webhookUrl,
+        webhookHeaders: job.webhookHeaders ? JSON.stringify(job.webhookHeaders) : null,
+        metadata: job.metadata ? JSON.stringify(job.metadata) : null,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt
+      }
+    });
+
+    return this.mapDbScheduledJobToScheduledJob(dbJob);
+  }
+
+  /**
+   * Get a scheduled job by ID
+   */
+  async getScheduledJobById(id: string): Promise<ScheduledJob | null> {
+    const job = await (this.prisma as any).scheduledJob.findUnique({
+      where: { id }
+    });
+
+    if (!job) {
+      return null;
+    }
+
+    return this.mapDbScheduledJobToScheduledJob(job);
+  }
+
+  /**
+   * List scheduled jobs with optional filtering
+   */
+  async listScheduledJobs(filter?: ScheduledJobFilter): Promise<ScheduledJob[]> {
+    const where: any = {};
+
+    if (filter) {
+      if (filter.status) {
+        where.status = filter.status;
+      }
+      if (filter.type) {
+        where.type = filter.type;
+      }
+      if (filter.taskName) {
+        where.taskName = filter.taskName;
+      }
+      if (filter.startDate) {
+        where.startDate = { gte: filter.startDate };
+      }
+      if (filter.endDate) {
+        where.endDate = { lte: filter.endDate };
+      }
+      if (filter.nextRunBefore) {
+        where.nextRunAt = { lte: filter.nextRunBefore };
+      }
+    }
+
+    const jobs = await (this.prisma as any).scheduledJob.findMany({
+      where,
+      orderBy: [
+        { nextRunAt: 'asc' },
+        { createdAt: 'desc' }
+      ],
+      ...(filter?.limit && { take: filter.limit }),
+      ...(filter?.offset && { skip: filter.offset })
+    });
+
+    return jobs.map((job: any) => this.mapDbScheduledJobToScheduledJob(job));
+  }
+
+  /**
+   * Update a scheduled job
+   */
+  async updateScheduledJob(id: string, updates: Partial<ScheduledJob>): Promise<ScheduledJob> {
+    // Remove id from updates if present
+    const { id: _, ...updateData } = updates;
+
+    // Handle JSON stringification for objects
+    const data: any = { ...updateData };
+    if (data.payload) {
+      data.payload = JSON.stringify(data.payload);
+    }
+    if (data.webhookHeaders) {
+      data.webhookHeaders = JSON.stringify(data.webhookHeaders);
+    }
+    if (data.metadata) {
+      data.metadata = JSON.stringify(data.metadata);
+    }
+
+    const updatedJob = await (this.prisma as any).scheduledJob.update({
+      where: { id },
+      data
+    });
+
+    return this.mapDbScheduledJobToScheduledJob(updatedJob);
+  }
+
+  /**
+   * Delete a scheduled job
+   */
+  async deleteScheduledJob(id: string): Promise<void> {
+    await (this.prisma as any).scheduledJob.delete({
+      where: { id }
+    });
+  }
+
+  /**
+   * Get scheduled jobs that need to be executed
+   */
+  async getScheduledJobsToRun(now: Date): Promise<ScheduledJob[]> {
+    const jobs = await (this.prisma as any).scheduledJob.findMany({
+      where: {
+        status: 'scheduled',
+        OR: [
+          // One-time jobs that are due
+          {
+            type: 'one-time',
+            runAt: { lte: now }
+          },
+          // Recurring jobs that are due
+          {
+            type: 'recurring',
+            nextRunAt: { lte: now }
+          }
+        ]
+      },
+      orderBy: [
+        { priority: 'desc' },
+        { nextRunAt: 'asc' },
+        { runAt: 'asc' }
+      ]
+    });
+
+    return jobs.map((job: any) => this.mapDbScheduledJobToScheduledJob(job));
+  }
+
+  /**
+   * Helper method to convert database scheduled job to ScheduledJob interface
+   */
+  private mapDbScheduledJobToScheduledJob(dbJob: any): ScheduledJob {
+    return {
+      id: dbJob.id,
+      taskName: dbJob.taskName,
+      payload: JSON.parse(dbJob.payload),
+      type: dbJob.type,
+      status: dbJob.status,
+      runAt: dbJob.runAt || undefined,
+      pattern: dbJob.pattern || undefined,
+      startDate: dbJob.startDate || undefined,
+      endDate: dbJob.endDate || undefined,
+      lastRunAt: dbJob.lastRunAt || undefined,
+      nextRunAt: dbJob.nextRunAt || undefined,
+      priority: dbJob.priority,
+      maxAttempts: dbJob.maxAttempts,
+      webhookUrl: dbJob.webhookUrl || undefined,
+      webhookHeaders: dbJob.webhookHeaders ? JSON.parse(dbJob.webhookHeaders) : undefined,
+      metadata: dbJob.metadata ? JSON.parse(dbJob.metadata) : undefined,
+      createdAt: dbJob.createdAt,
+      updatedAt: dbJob.updatedAt
     };
   }
 }
